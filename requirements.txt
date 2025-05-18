@@ -1,0 +1,6 @@
+langgraph>=0.0.15
+langchain>=0.1.0
+python-dotenv>=1.0.0
+pymilvus>=2.3.0
+pydantic>=2.5.0
+typing-extensions>=4.8.0 
