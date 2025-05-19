@@ -41,13 +41,19 @@ wget https://github.com/milvus-io/milvus/releases/download/v2.5.10/milvus-standa
 sudo docker compose up -d
 ```
 
-3. Set up the vector database:
+3. Preprocess the data:
+```bash
+python read_data.py
+```
+This will preprocess your raw data and prepare it for the vector database.
+
+4. Set up the vector database:
 ```bash
 python setup_milvus.py
 ```
 This will:
 - Create a new collection in Milvus
-- Load your RAG data from `data/RAG_data.csv`
+- Load your preprocessed RAG data from `data/RAG_data.csv`
 - Generate embeddings using all-mpnet-base-v2
 - Create indexes for efficient searching
 
