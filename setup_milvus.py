@@ -17,7 +17,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Constants
-COLLECTION_NAME = "flow_dataset"
+COLLECTION_NAME = "rag_dataset"
 DIMENSION = 768  # Dimension for all-mpnet-base-v2
 EMBEDDING_MODEL = "all-mpnet-base-v2"
 
@@ -36,12 +36,12 @@ def create_collection():
     # Define the collection schema
     fields = [
         FieldSchema(name="id", dtype=DataType.INT64, is_primary=True, auto_id=True),
+        FieldSchema(name="code", dtype=DataType.VARCHAR, max_length=65535),
         FieldSchema(name="prompt", dtype=DataType.VARCHAR, max_length=65535),
-        FieldSchema(name="script", dtype=DataType.VARCHAR, max_length=65535),
-        FieldSchema(name="prompt_embedding", dtype=DataType.FLOAT_VECTOR, dim=DIMENSION),
-        FieldSchema(name="script_embedding", dtype=DataType.FLOAT_VECTOR, dim=DIMENSION)
+        FieldSchema(name="code_embedding", dtype=DataType.FLOAT_VECTOR, dim=DIMENSION),
+        FieldSchema(name="prompt_embedding", dtype=DataType.FLOAT_VECTOR, dim=DIMENSION)
     ]
-    schema = CollectionSchema(fields=fields, description="Flow dataset with embeddings")
+    schema = CollectionSchema(fields=fields, description="RAG dataset with code and prompt embeddings")
     
     # Create collection
     collection = Collection(name=COLLECTION_NAME, schema=schema)
@@ -52,8 +52,8 @@ def create_collection():
         "index_type": "IVF_FLAT",
         "params": {"nlist": 1024}
     }
+    collection.create_index(field_name="code_embedding", index_params=index_params)
     collection.create_index(field_name="prompt_embedding", index_params=index_params)
-    collection.create_index(field_name="script_embedding", index_params=index_params)
     
     return collection
 
@@ -61,7 +61,7 @@ def load_and_process_data(file_path: str) -> pd.DataFrame:
     """Load and process the CSV data."""
     df = pd.read_csv(file_path)
     # Ensure column names are correct
-    df.columns = ['prompt', 'script']
+    df.columns = ['code', 'prompt']
     return df
 
 def generate_embeddings(texts: List[str], model: SentenceTransformer) -> List[List[float]]:
@@ -70,16 +70,16 @@ def generate_embeddings(texts: List[str], model: SentenceTransformer) -> List[Li
 
 def insert_data(collection: Collection, df: pd.DataFrame, model: SentenceTransformer):
     """Insert data into the collection with embeddings."""
-    # Generate embeddings for prompts and scripts
+    # Generate embeddings for code and prompts
+    code_embeddings = generate_embeddings(df['code'].tolist(), model)
     prompt_embeddings = generate_embeddings(df['prompt'].tolist(), model)
-    script_embeddings = generate_embeddings(df['script'].tolist(), model)
     
     # Prepare data for insertion
     entities = [
-        df['prompt'].tolist(),  # prompt
-        df['script'].tolist(),  # script
-        prompt_embeddings,      # prompt_embedding
-        script_embeddings       # script_embedding
+        df['code'].tolist(),     # code
+        df['prompt'].tolist(),   # prompt
+        code_embeddings,         # code_embedding
+        prompt_embeddings        # prompt_embedding
     ]
     
     # Insert data
@@ -95,7 +95,7 @@ def setup_milvus():
     collection = create_collection()
     
     print("Loading data...")
-    df = load_and_process_data("data/Flow_Dataset.csv")
+    df = load_and_process_data("data/RAG_data.csv")
     
     print("Loading embedding model...")
     model = SentenceTransformer(EMBEDDING_MODEL)
@@ -120,7 +120,7 @@ def search_similar(
     Args:
         collection: Milvus collection
         query: Search query
-        search_field: Field to search in ("prompt" or "script")
+        search_field: Field to search in ("code" or "prompt")
         top_k: Number of results to return
     
     Returns:
@@ -142,7 +142,7 @@ def search_similar(
         anns_field=f"{search_field}_embedding",
         param=search_params,
         limit=top_k,
-        output_fields=["prompt", "script"]
+        output_fields=["code", "prompt"]
     )
     
     # Format results
@@ -150,8 +150,8 @@ def search_similar(
     for hits in results:
         for hit in hits:
             formatted_results.append({
+                "code": hit.entity.get("code"),
                 "prompt": hit.entity.get("prompt"),
-                "script": hit.entity.get("script"),
                 "distance": hit.distance
             })
     
@@ -168,14 +168,14 @@ if __name__ == "__main__":
     print("\nSearching by prompt:")
     results = search_similar(collection, "example prompt", search_field="prompt")
     for r in results:
+        print(f"Code: {r['code']}")
         print(f"Prompt: {r['prompt']}")
-        print(f"Script: {r['script']}")
         print(f"Distance: {r['distance']}\n")
     
-    # Example: Search by script
-    print("\nSearching by script:")
-    results = search_similar(collection, "example script", search_field="script")
+    # Example: Search by code
+    print("\nSearching by code:")
+    results = search_similar(collection, "example code", search_field="code")
     for r in results:
+        print(f"Code: {r['code']}")
         print(f"Prompt: {r['prompt']}")
-        print(f"Script: {r['script']}")
         print(f"Distance: {r['distance']}\n") 
