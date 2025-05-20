@@ -1,167 +1,314 @@
-from typing import Dict, List, Tuple, TypedDict, Annotated
-from langgraph.graph import Graph, StateGraph
-from langgraph.prebuilt import ToolNode
-from pydantic import BaseModel, Field
 import os
+import pandas as pd
+from typing import Dict, TypedDict, List, Optional
+from langgraph.graph import Graph, StateGraph
 from dotenv import load_dotenv
-from model_config import DRAFTING_MODELS, VERIFICATION_MODEL, CORRECTIONS_MODEL, CONSOLIDATION_MODEL
+from google import genai
+from openai import OpenAI
+from tqdm import tqdm
+from pymilvus import connections, Collection
+from sentence_transformers import SentenceTransformer
 
 # Load environment variables
 load_dotenv()
 
-# State definitions
+# Constants
+COLLECTION_NAME = "rag_dataset"
+EMBEDDING_MODEL = "all-mpnet-base-v2"
+MAX_VERIFICATION_ATTEMPTS = 3
+
+# Initialize models
+model = SentenceTransformer(EMBEDDING_MODEL)
+openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+gemini_client = genai.Client(api_key=os.getenv("GOOGLE_API_KEY"))
+
+# System prompts
+DRAFTING_PROMPT = """You are a helpful assistant that generates Python scripts for the OpenROAD physical design tool. You only generate scripts. Do not include any formalities or conversational text.
+
+**Constraints:**
+* The generated Python script should use the OpenROAD Python API to perform the requested actions.
+* The script must include brief comments to explain each section of the code, including the purpose of each function call 
+* The script should be executable.
+* Assume the user has already set up the OpenROAD environment and has access to the required libraries, LEF files, and Verilog netlists.
+* Prioritize clarity and readability in the generated code.
+* Use descriptive variable names.
+
+**Output Format:**
+The output should be a complete Python script enclosed within ```python and ``` tags."""
+
+CONSOLIDATION_PROMPT = """You are a consolidation agent that merges and verifies Python scripts for OpenROAD. Your task is to:
+1. Compare the two provided scripts
+2. Identify the best parts of each script
+3. Merge them into a single, correct script
+4. Ensure the merged script follows all OpenROAD best practices
+
+**Output Format:**
+The output should be a complete Python script enclosed within ```python and ``` tags."""
+
+VERIFICATION_PROMPT = """You are a verification agent that checks OpenROAD Python scripts. Your task is to:
+1. Verify that all function calls are valid OpenROAD API calls
+2. Ensure the script meets all requirements from the original prompt
+3. Check for any potential errors or issues
+
+**Output Format:**
+If the script is valid, respond with: "VALID: [script]"
+If the script needs corrections, respond with: "INVALID: [list of required corrections]"
+"""
+
+CORRECTION_PROMPT = """You are a correction agent that fixes OpenROAD Python scripts. Your task is to:
+1. Review the verification feedback
+2. Make the necessary corrections to the script
+3. Ensure the corrected script follows all OpenROAD best practices
+
+**Output Format:**
+The output should be a complete Python script enclosed within ```python and ``` tags."""
+
+# Define state
 class AgentState(TypedDict):
-    user_prompt: str
-    rag_documents: List[str]
-    draft_scripts: List[str]
-    consolidated_script: str
-    verification_feedback: str
-    iteration_count: int
-    is_verified: bool
+    prompt: str
+    gemini_draft: Optional[str]
+    openai_draft: Optional[str]
+    consolidated_script: Optional[str]
+    verification_result: Optional[str]
+    corrections: Optional[str]
+    final_script: Optional[str]
+    retrieved_docs: List[Dict]
+    verification_attempts: int
 
-# Agent definitions
-class DraftingAgent:
-    def __init__(self, model_config: Dict[str, Any]):
-        self.model_config = model_config
-        self._initialize_model()
+def get_relevant_documents(query: str, collection_name: str = COLLECTION_NAME, top_k: int = 5):
+    # Connect to Milvus
+    connections.connect(
+        alias="default", 
+        host=os.getenv("MILVUS_HOST", "localhost"),
+        port=os.getenv("MILVUS_PORT", "19530")
+    )
+    
+    # Get collection
+    collection = Collection(collection_name)
+    collection.load()
+    
+    # Encode query
+    query_embedding = model.encode(query)
+    
+    # Search
+    search_params = {
+        "metric_type": "L2",
+        "params": {"nprobe": 10},
+    }
+    
+    results = collection.search(
+        data=[query_embedding],
+        anns_field="prompt_embedding",
+        param=search_params,
+        limit=top_k,
+        output_fields=["code", "prompt"]
+    )
+    
+    # Extract and return documents
+    documents = []
+    for hits in results:
+        for hit in hits:
+            documents.append({
+                'code': hit.entity.get('code'),
+                'prompt': hit.entity.get('prompt'),
+                'distance': hit.distance
+            })
+    
+    return documents
 
-    def _initialize_model(self):
-        # Placeholder for model initialization based on provider
-        if self.model_config["provider"] == "openai":
-            # Initialize OpenAI model
-            pass
-        elif self.model_config["provider"] == "anthropic":
-            # Initialize Anthropic model
-            pass
-        elif self.model_config["provider"] == "google":
-            # Initialize Google model
-            pass
+class GeminiDraftingAgent:
+    def __init__(self):
+        self.model_name = "gemini-2.5-flash-preview-04-17"
 
-    def draft_script(self, state: AgentState) -> AgentState:
-        # Placeholder for RAG document fetching
-        rag_docs = state["rag_documents"]
-        
-        # Placeholder for script generation using configured model
-        draft = f"Generated script using {self.model_config['model_name']}"
-        
-        state["draft_scripts"].append(draft)
+    def generate_response(self, state: AgentState) -> AgentState:
+        try:
+            # Format retrieved documents
+            context = "\n\nRelevant examples from the knowledge base:\n"
+            for i, doc in enumerate(state['retrieved_docs'], 1):
+                context += f"\nExample {i}:\n"
+                context += f"Prompt: {doc['prompt']}\n"
+                context += f"Code:\n{doc['code']}\n"
+                context += "\n\n"
+
+            # Combine system prompt, context, and user prompt
+            full_prompt = f"{DRAFTING_PROMPT}\n{context}\nUser request: {state['prompt']}"
+            
+            response = gemini_client.models.generate_content(
+                model=self.model_name,
+                contents=full_prompt
+            )
+            state['gemini_draft'] = response.text
+        except Exception as e:
+            state['gemini_draft'] = f"Error generating response: {str(e)}"
+        return state
+
+class OpenAIDraftingAgent:
+    def generate_response(self, state: AgentState) -> AgentState:
+        try:
+            # Format retrieved documents
+            context = "\n\nRelevant examples from the knowledge base:\n"
+            for i, doc in enumerate(state['retrieved_docs'], 1):
+                context += f"\nExample {i}:\n"
+                context += f"Prompt: {doc['prompt']}\n"
+                context += f"Code:\n{doc['code']}\n"
+                context += "\n\n"
+
+            # Combine system prompt, context, and user prompt
+            full_prompt = f"{DRAFTING_PROMPT}\n{context}\nUser request: {state['prompt']}"
+            
+            response = openai_client.chat.completions.create(
+                model="gpt-4.1-mini-2025-04-14",
+                messages=[
+                    {"role": "system", "content": DRAFTING_PROMPT},
+                    {"role": "user", "content": f"{context}\nUser request: {state['prompt']}"}
+                ]
+            )
+            state['openai_draft'] = response.choices[0].message.content
+        except Exception as e:
+            state['openai_draft'] = f"Error generating response: {str(e)}"
         return state
 
 class ConsolidationAgent:
-    def __init__(self, model_config: Dict[str, Any]):
-        self.model_config = model_config
-        self._initialize_model()
-
-    def _initialize_model(self):
-        # Initialize Google model (Flash 2.5 Non-thinking)
-        pass
-
-    def consolidate_scripts(self, state: AgentState) -> AgentState:
-        # Placeholder for script consolidation using Flash 2.5 Non-thinking
-        consolidated = "Consolidated script using Flash 2.5 Non-thinking"
-        state["consolidated_script"] = consolidated
+    def generate_response(self, state: AgentState) -> AgentState:
+        try:
+            full_prompt = f"{CONSOLIDATION_PROMPT}\n\nOriginal prompt: {state['prompt']}\n\nGemini draft:\n{state['gemini_draft']}\n\nOpenAI draft:\n{state['openai_draft']}"
+            
+            response = gemini_client.models.generate_content(
+                model="gemini-2.5-flash-preview-04-17",
+                contents=full_prompt
+            )
+            state['consolidated_script'] = response.text
+        except Exception as e:
+            state['consolidated_script'] = f"Error consolidating scripts: {str(e)}"
         return state
 
 class VerificationAgent:
-    def __init__(self, model_config: Dict[str, Any]):
-        self.model_config = model_config
-        self._initialize_model()
+    def generate_response(self, state: AgentState) -> AgentState:
+        try:
+            # Get relevant documents for the consolidated script
+            script_docs = get_relevant_documents(state['consolidated_script'])
+            
+            # Format retrieved documents
+            context = "\n\nRelevant examples from the knowledge base:\n"
+            for i, doc in enumerate(script_docs, 1):
+                context += f"\nExample {i}:\n"
+                context += f"Code:\n{doc['code']}\n"
+                context += "\n\n"
 
-    def _initialize_model(self):
-        # Initialize Google model (Flash 2.5 Thinking)
-        pass
-
-    def verify_script(self, state: AgentState) -> AgentState:
-        # Placeholder for verification logic using Flash 2.5 Thinking
-        is_valid = True  # Placeholder
-        feedback = "Verification feedback from Flash 2.5 Thinking"
-        
-        state["verification_feedback"] = feedback
-        state["is_verified"] = is_valid
+            full_prompt = f"{VERIFICATION_PROMPT}\n\nOriginal prompt: {state['prompt']}\n\nScript to verify:\n{state['consolidated_script']}\n{context}"
+            
+            response = gemini_client.models.generate_content(
+                model="gemini-2.5-flash-preview-04-17",
+                contents=full_prompt
+            )
+            state['verification_result'] = response.text
+            state['retrieved_docs'] = script_docs  # Update retrieved docs for potential corrections
+        except Exception as e:
+            state['verification_result'] = f"Error verifying script: {str(e)}"
         return state
 
-class CorrectionsAgent:
-    def __init__(self, model_config: Dict[str, Any]):
-        self.model_config = model_config
-        self._initialize_model()
-
-    def _initialize_model(self):
-        # Initialize Google model (Flash 2.5 Non-thinking)
-        pass
-
-    def correct_script(self, state: AgentState) -> AgentState:
-        # Placeholder for correction logic using Flash 2.5 Non-thinking
-        corrected_script = "Corrected script using Flash 2.5 Non-thinking"
-        state["consolidated_script"] = corrected_script
-        state["iteration_count"] += 1
+class CorrectionAgent:
+    def generate_response(self, state: AgentState) -> AgentState:
+        try:
+            full_prompt = f"{CORRECTION_PROMPT}\n\nOriginal prompt: {state['prompt']}\n\nScript to correct:\n{state['consolidated_script']}\n\nVerification feedback:\n{state['verification_result']}"
+            
+            response = gemini_client.models.generate_content(
+                model="gemini-2.5-flash-preview-04-17",
+                contents=full_prompt
+            )
+            state['consolidated_script'] = response.text  # Update the consolidated script
+            state['verification_attempts'] += 1
+        except Exception as e:
+            state['consolidated_script'] = f"Error correcting script: {str(e)}"
         return state
-
-def should_continue_verification(state: AgentState) -> str:
-    if state["is_verified"]:
-        return "end"
-    if state["iteration_count"] >= 5:
-        return "end"
-    return "continue_verification"
 
 def create_workflow() -> Graph:
-    # Initialize agents with specific model configurations
-    drafting_agent1 = DraftingAgent(DRAFTING_MODELS["drafting1"].get_config())
-    drafting_agent2 = DraftingAgent(DRAFTING_MODELS["drafting2"].get_config())
-    drafting_agent3 = DraftingAgent(DRAFTING_MODELS["drafting3"].get_config())
-    consolidation_agent = ConsolidationAgent(CONSOLIDATION_MODEL.get_config())
-    verification_agent = VerificationAgent(VERIFICATION_MODEL.get_config())
-    corrections_agent = CorrectionsAgent(CORRECTIONS_MODEL.get_config())
-
+    # Initialize agents
+    gemini_drafter = GeminiDraftingAgent()
+    openai_drafter = OpenAIDraftingAgent()
+    consolidator = ConsolidationAgent()
+    verifier = VerificationAgent()
+    corrector = CorrectionAgent()
+    
     # Create workflow
     workflow = StateGraph(AgentState)
-
+    
     # Add nodes
-    workflow.add_node("drafting1", drafting_agent1.draft_script)
-    workflow.add_node("drafting2", drafting_agent2.draft_script)
-    workflow.add_node("drafting3", drafting_agent3.draft_script)
-    workflow.add_node("consolidation", consolidation_agent.consolidate_scripts)
-    workflow.add_node("verification", verification_agent.verify_script)
-    workflow.add_node("corrections", corrections_agent.correct_script)
-
-    # Add edges
-    workflow.add_edge("drafting1", "drafting2")
-    workflow.add_edge("drafting2", "drafting3")
-    workflow.add_edge("drafting3", "consolidation")
-    workflow.add_edge("consolidation", "verification")
-    workflow.add_edge("verification", "corrections")
-    workflow.add_edge("corrections", "verification")
-
-    # Set entry and conditional edges
-    workflow.set_entry_point("drafting1")
+    workflow.add_node("gemini_draft", gemini_drafter.generate_response)
+    workflow.add_node("openai_draft", openai_drafter.generate_response)
+    workflow.add_node("consolidate", consolidator.generate_response)
+    workflow.add_node("verify", verifier.generate_response)
+    workflow.add_node("correct", corrector.generate_response)
+    
+    # Define edges
+    workflow.add_edge("gemini_draft", "consolidate")
+    workflow.add_edge("openai_draft", "consolidate")
+    workflow.add_edge("consolidate", "verify")
+    
+    # Add conditional edge for verification
+    def should_correct(state: AgentState) -> bool:
+        if state['verification_attempts'] >= MAX_VERIFICATION_ATTEMPTS:
+            return False
+        return "INVALID:" in state['verification_result']
+    
     workflow.add_conditional_edges(
-        "verification",
-        should_continue_verification,
+        "verify",
+        should_correct,
         {
-            "continue_verification": "corrections",
-            "end": "end"
+            True: "correct",
+            False: "end"
         }
     )
-
+    
+    # Add edge from correction back to verification
+    workflow.add_edge("correct", "verify")
+    
+    # Set entry points
+    workflow.set_entry_point("gemini_draft")
+    workflow.set_entry_point("openai_draft")
+    
     return workflow.compile()
 
 def main():
+    # Load benchmark data
+    print("Loading benchmark data...")
+    df = pd.read_csv("data/bench_data.csv")
+    total_prompts = len(df)
+    print(f"Found {total_prompts} prompts to process")
+    
     # Initialize workflow
     workflow = create_workflow()
     
-    # Example usage
-    initial_state = {
-        "user_prompt": "Example prompt",
-        "rag_documents": [],
-        "draft_scripts": [],
-        "consolidated_script": "",
-        "verification_feedback": "",
-        "iteration_count": 0,
-        "is_verified": False
-    }
+    # Process all prompts with progress bar
+    results = []
+    for _, row in tqdm(df.iterrows(), total=total_prompts, desc="Processing prompts"):
+        # Get relevant documents
+        relevant_docs = get_relevant_documents(row['prompt'])
+        
+        # Run workflow with retrieved documents
+        initial_state = {
+            "prompt": row['prompt'],
+            "gemini_draft": None,
+            "openai_draft": None,
+            "consolidated_script": None,
+            "verification_result": None,
+            "corrections": None,
+            "final_script": None,
+            "retrieved_docs": relevant_docs,
+            "verification_attempts": 0
+        }
+        
+        result = workflow.invoke(initial_state)
+        results.append({
+            'prompt': result['prompt'],
+            'final_script': result['consolidated_script']
+        })
     
-    # Run workflow
-    result = workflow.invoke(initial_state)
-    print("Final state:", result)
+    # Save results
+    print("\nSaving results...")
+    results_df = pd.DataFrame(results)
+    results_df.to_csv("results/multi_agent_results.csv", index=False)
+    print("Results saved to results/multi_agent_results.csv")
 
 if __name__ == "__main__":
     main() 
