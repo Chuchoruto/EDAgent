@@ -140,23 +140,13 @@ class GeminiDraftingAgent:
             # Combine system prompt, context, and user prompt
             full_prompt = f"{DRAFTING_PROMPT}\n{context}\nUser request: {state['original_prompt_gemini']}"
             
-            print("\n=== Gemini Drafting Agent ===")
-            print("Input Prompt:")
-            print(full_prompt)
-            print("\nGenerating response...")
-            
             response = gemini_client.models.generate_content(
                 model=self.model_name,
                 contents=full_prompt
             )
             state['gemini_draft'] = response.text
-            
-            print("\nOutput:")
-            print(state['gemini_draft'])
-            print("=" * 50)
         except Exception as e:
             state['gemini_draft'] = f"Error generating response: {str(e)}"
-            print(f"Error in Gemini Drafting Agent: {str(e)}")
         return state
 
 class OpenAIDraftingAgent:
@@ -173,11 +163,6 @@ class OpenAIDraftingAgent:
             # Combine system prompt, context, and user prompt
             full_prompt = f"{DRAFTING_PROMPT}\n{context}\nUser request: {state['original_prompt_openai']}"
             
-            print("\n=== OpenAI Drafting Agent ===")
-            print("Input Prompt:")
-            print(full_prompt)
-            print("\nGenerating response...")
-            
             response = openai_client.chat.completions.create(
                 model="gpt-4.1-mini-2025-04-14",
                 messages=[
@@ -186,13 +171,8 @@ class OpenAIDraftingAgent:
                 ]
             )
             state['openai_draft'] = response.choices[0].message.content
-            
-            print("\nOutput:")
-            print(state['openai_draft'])
-            print("=" * 50)
         except Exception as e:
             state['openai_draft'] = f"Error generating response: {str(e)}"
-            print(f"Error in OpenAI Drafting Agent: {str(e)}")
         return state
 
 class ConsolidationAgent:
@@ -200,23 +180,13 @@ class ConsolidationAgent:
         try:
             full_prompt = f"{CONSOLIDATION_PROMPT}\n\nOriginal prompt: {state['original_prompt_gemini']}\n\nGemini draft:\n{state['gemini_draft']}\n\nOpenAI draft:\n{state['openai_draft']}"
             
-            print("\n=== Consolidation Agent ===")
-            print("Input Prompt:")
-            print(full_prompt)
-            print("\nGenerating response...")
-            
             response = gemini_client.models.generate_content(
                 model="gemini-2.5-flash-preview-04-17",
                 contents=full_prompt
             )
             state['consolidated_script'] = response.text
-            
-            print("\nOutput:")
-            print(state['consolidated_script'])
-            print("=" * 50)
         except Exception as e:
             state['consolidated_script'] = f"Error consolidating scripts: {str(e)}"
-            print(f"Error in Consolidation Agent: {str(e)}")
         return state
 
 class VerificationAgent:
@@ -234,24 +204,14 @@ class VerificationAgent:
 
             full_prompt = f"{VERIFICATION_PROMPT}\n\nOriginal prompt: {state['original_prompt_gemini']}\n\nScript to verify:\n{state['consolidated_script']}\n{context}"
             
-            print("\n=== Verification Agent ===")
-            print("Input Prompt:")
-            print(full_prompt)
-            print("\nGenerating response...")
-            
             response = gemini_client.models.generate_content(
                 model="gemini-2.5-flash-preview-04-17",
                 contents=full_prompt
             )
             state['verification_result'] = response.text
             state['retrieved_docs'] = script_docs
-            
-            print("\nOutput:")
-            print(state['verification_result'])
-            print("=" * 50)
         except Exception as e:
             state['verification_result'] = f"Error verifying script: {str(e)}"
-            print(f"Error in Verification Agent: {str(e)}")
         return state
 
 class CorrectionAgent:
@@ -259,24 +219,14 @@ class CorrectionAgent:
         try:
             full_prompt = f"{CORRECTION_PROMPT}\n\nOriginal prompt: {state['original_prompt_gemini']}\n\nScript to correct:\n{state['consolidated_script']}\n\nVerification feedback:\n{state['verification_result']}"
             
-            print("\n=== Correction Agent ===")
-            print("Input Prompt:")
-            print(full_prompt)
-            print("\nGenerating response...")
-            
             response = gemini_client.models.generate_content(
                 model="gemini-2.5-flash-preview-04-17",
                 contents=full_prompt
             )
             state['consolidated_script'] = response.text
             state['verification_attempts'] += 1
-            
-            print("\nOutput:")
-            print(state['consolidated_script'])
-            print("=" * 50)
         except Exception as e:
             state['consolidated_script'] = f"Error correcting script: {str(e)}"
-            print(f"Error in Correction Agent: {str(e)}")
         return state
 
 def create_workflow() -> Graph:
@@ -299,6 +249,9 @@ def create_workflow() -> Graph:
     
     # Add end node
     def end_workflow(state: AgentState) -> AgentState:
+        # If we hit max iterations, use the last script that was verified
+        if state['verification_attempts'] >= MAX_VERIFICATION_ATTEMPTS:
+            state['final_script'] = state['consolidated_script']
         return state
     
     workflow.add_node("end", end_workflow)
@@ -336,41 +289,52 @@ def main():
     print("Loading benchmark data...")
     df = pd.read_csv("data/bench_data.csv")
     
-    # Only process the first prompt
-    first_prompt = df.iloc[0]
-    print(f"\nProcessing first prompt: {first_prompt['prompt']}")
+    # Initialize results list
+    all_results = []
     
-    # Initialize workflow
-    workflow = create_workflow()
+    # Process all prompts with progress bar
+    for idx, row in tqdm(df.iterrows(), total=len(df), desc="Processing prompts"):
+        # Initialize workflow
+        workflow = create_workflow()
+        
+        # Get relevant documents
+        relevant_docs = get_relevant_documents(row['prompt'])
+        
+        # Run workflow with retrieved documents
+        initial_state = {
+            "original_prompt_gemini": row['prompt'],
+            "original_prompt_openai": row['prompt'],
+            "gemini_draft": None,
+            "openai_draft": None,
+            "consolidated_script": None,
+            "verification_result": None,
+            "corrections": None,
+            "final_script": None,
+            "retrieved_docs": relevant_docs,
+            "verification_attempts": 0
+        }
+        
+        result = workflow.invoke(initial_state)
+        
+        # Add result to list
+        all_results.append({
+            'prompt': result['original_prompt_gemini'],
+            'final_script': result['final_script'] if result['final_script'] else result['consolidated_script'],
+            'iterations': result['verification_attempts']
+        })
     
-    # Get relevant documents
-    relevant_docs = get_relevant_documents(first_prompt['prompt'])
-    
-    # Run workflow with retrieved documents
-    initial_state = {
-        "original_prompt_gemini": first_prompt['prompt'],
-        "original_prompt_openai": first_prompt['prompt'],
-        "gemini_draft": None,
-        "openai_draft": None,
-        "consolidated_script": None,
-        "verification_result": None,
-        "corrections": None,
-        "final_script": None,
-        "retrieved_docs": relevant_docs,
-        "verification_attempts": 0
-    }
-    
-    print("\nStarting workflow...")
-    result = workflow.invoke(initial_state)
-    
-    # Save results
+    # Save all results
     print("\nSaving results...")
-    results_df = pd.DataFrame([{
-        'prompt': result['original_prompt_gemini'],  # Using gemini prompt as reference
-        'final_script': result['consolidated_script']
-    }])
+    results_df = pd.DataFrame(all_results)
     results_df.to_csv("results/multi_agent_results.csv", index=False)
     print("Results saved to results/multi_agent_results.csv")
+    
+    # Print summary
+    print("\nSummary:")
+    print(f"Total prompts processed: {len(all_results)}")
+    print(f"Average iterations per prompt: {results_df['iterations'].mean():.2f}")
+    print(f"Max iterations: {results_df['iterations'].max()}")
+    print(f"Min iterations: {results_df['iterations'].min()}")
 
 if __name__ == "__main__":
     main() 
