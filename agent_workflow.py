@@ -9,6 +9,8 @@ from openai import OpenAI
 from tqdm import tqdm
 from pymilvus import connections, Collection
 from sentence_transformers import SentenceTransformer
+import concurrent.futures
+from functools import partial
 
 # Load environment variables
 load_dotenv()
@@ -284,44 +286,58 @@ def create_workflow() -> Graph:
     
     return workflow.compile()
 
+def process_single_prompt(prompt: str, workflow: Graph) -> Dict:
+    # Get relevant documents
+    relevant_docs = get_relevant_documents(prompt)
+    
+    # Run workflow with retrieved documents
+    initial_state = {
+        "original_prompt_gemini": prompt,
+        "original_prompt_openai": prompt,
+        "gemini_draft": None,
+        "openai_draft": None,
+        "consolidated_script": None,
+        "verification_result": None,
+        "corrections": None,
+        "final_script": None,
+        "retrieved_docs": relevant_docs,
+        "verification_attempts": 0
+    }
+    
+    result = workflow.invoke(initial_state)
+    
+    return {
+        'prompt': result['original_prompt_gemini'],
+        'final_script': result['final_script'] if result['final_script'] else result['consolidated_script'],
+        'iterations': result['verification_attempts']
+    }
+
 def main():
     # Load benchmark data
     print("Loading benchmark data...")
     df = pd.read_csv("data/bench_data.csv")
     
-    # Initialize results list
-    all_results = []
+    # Initialize workflow
+    workflow = create_workflow()
     
-    # Process all prompts with progress bar
-    for idx, row in tqdm(df.iterrows(), total=len(df), desc="Processing prompts"):
-        # Initialize workflow
-        workflow = create_workflow()
+    # Create a partial function with the workflow
+    process_prompt = partial(process_single_prompt, workflow=workflow)
+    
+    # Process prompts in parallel with progress bar
+    all_results = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        # Submit all prompts to the executor
+        future_to_prompt = {executor.submit(process_prompt, row['prompt']): row['prompt'] for _, row in df.iterrows()}
         
-        # Get relevant documents
-        relevant_docs = get_relevant_documents(row['prompt'])
-        
-        # Run workflow with retrieved documents
-        initial_state = {
-            "original_prompt_gemini": row['prompt'],
-            "original_prompt_openai": row['prompt'],
-            "gemini_draft": None,
-            "openai_draft": None,
-            "consolidated_script": None,
-            "verification_result": None,
-            "corrections": None,
-            "final_script": None,
-            "retrieved_docs": relevant_docs,
-            "verification_attempts": 0
-        }
-        
-        result = workflow.invoke(initial_state)
-        
-        # Add result to list
-        all_results.append({
-            'prompt': result['original_prompt_gemini'],
-            'final_script': result['final_script'] if result['final_script'] else result['consolidated_script'],
-            'iterations': result['verification_attempts']
-        })
+        # Process results as they complete with progress bar
+        for future in tqdm(concurrent.futures.as_completed(future_to_prompt), 
+                         total=len(future_to_prompt),
+                         desc="Processing prompts"):
+            try:
+                result = future.result()
+                all_results.append(result)
+            except Exception as e:
+                print(f"Error processing prompt: {e}")
     
     # Save all results
     print("\nSaving results...")
