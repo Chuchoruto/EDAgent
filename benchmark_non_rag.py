@@ -8,6 +8,22 @@ from google import genai
 # Load environment variables
 load_dotenv()
 
+# System prompt for the agent
+SYSTEM_PROMPT = """You are a helpful assistant that generates Python scripts for the OpenROAD physical design tool. You only generate scripts. Do not include any formalities or conversational text.
+
+**Constraints:**
+
+* The generated Python script should use the OpenROAD Python API to perform the requested actions.
+* The script must include brief comments to explain each section of the code, including the purpose of each function call 
+* The script should be executable.
+* Assume the user has already set up the OpenROAD environment and has access to the required libraries, LEF files, and Verilog netlists.
+* Prioritize clarity and readability in the generated code.
+* Use descriptive variable names.
+
+**Output Format:**
+
+The output should be a complete Python script enclosed within ```python and ``` tags."""
+
 # Define state
 class AgentState(TypedDict):
     prompt: str
@@ -21,10 +37,13 @@ class GeminiAgent:
 
     def generate_response(self, state: AgentState) -> AgentState:
         try:
-            print(f"\nGenerating response for prompt: {state['prompt'][:100]}...")
+            # Combine system prompt with user prompt
+            full_prompt = f"{SYSTEM_PROMPT}\n\nUser request: {state['prompt']}"
+            print(f"\nGenerating response for prompt: {full_prompt[1000:1100]}...")
+            
             response = self.client.models.generate_content(
                 model=self.model_name,
-                contents=state['prompt']
+                contents=full_prompt
             )
             state['response'] = response.text
             print(f"Generated response: {state['response'][:100]}...")
