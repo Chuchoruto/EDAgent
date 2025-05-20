@@ -4,6 +4,7 @@ from typing import Dict, TypedDict
 from langgraph.graph import Graph, StateGraph
 from dotenv import load_dotenv
 from google import genai
+from tqdm import tqdm
 
 # Load environment variables
 load_dotenv()
@@ -37,34 +38,21 @@ class GeminiAgent:
 
     def generate_response(self, state: AgentState) -> AgentState:
         try:
-            # Combine system prompt with user prompt
             full_prompt = f"{SYSTEM_PROMPT}\n\nUser request: {state['prompt']}"
-            print(f"\nGenerating response for prompt: {full_prompt[1000:1100]}...")
-            
             response = self.client.models.generate_content(
                 model=self.model_name,
                 contents=full_prompt
             )
             state['response'] = response.text
-            print(f"Generated response: {state['response'][:100]}...")
         except Exception as e:
-            print(f"Error occurred: {str(e)}")
             state['response'] = f"Error generating response: {str(e)}"
         return state
 
 def create_workflow() -> Graph:
-    # Initialize agent
     agent = GeminiAgent()
-    
-    # Create workflow
     workflow = StateGraph(AgentState)
-    
-    # Add node
     workflow.add_node("generate", agent.generate_response)
-    
-    # Set entry point
     workflow.set_entry_point("generate")
-    
     return workflow.compile()
 
 def main():
@@ -72,42 +60,32 @@ def main():
     os.makedirs("results", exist_ok=True)
     
     # Load benchmark data
-    print("\nLoading benchmark data...")
+    print("Loading benchmark data...")
     df = pd.read_csv("data/bench_data.csv")
-    first_prompt = df.iloc[0]['prompt']
-    print(f"First prompt loaded: {first_prompt[:100]}...")
+    total_prompts = len(df)
+    print(f"Found {total_prompts} prompts to process")
     
     # Initialize workflow
-    print("\nInitializing workflow...")
     workflow = create_workflow()
     
-    # Run workflow
-    initial_state = {
-        "prompt": first_prompt,
-        "response": ""
-    }
-    
-    print("\nInvoking workflow...")
-    result = workflow.invoke(initial_state)
-    print(f"\nWorkflow result: {result}")
+    # Process all prompts with progress bar
+    results = []
+    for _, row in tqdm(df.iterrows(), total=total_prompts, desc="Processing prompts"):
+        initial_state = {
+            "prompt": row['prompt'],
+            "response": ""
+        }
+        result = workflow.invoke(initial_state)
+        results.append({
+            'prompt': result['prompt'],
+            'response': result['response']
+        })
     
     # Save results
     print("\nSaving results...")
-    results_df = pd.DataFrame({
-        'prompt': [result['prompt']],
-        'response': [result['response']]
-    })
-    
-    print(f"\nDataFrame to save:\n{results_df}")
+    results_df = pd.DataFrame(results)
     results_df.to_csv("results/no_RAG_non-thinking.csv", index=False)
-    print("\nResults saved to results/no_RAG_non-thinking.csv")
-    
-    # Verify the file was created and has content
-    if os.path.exists("results/no_RAG_non-thinking.csv"):
-        saved_df = pd.read_csv("results/no_RAG_non-thinking.csv")
-        print(f"\nVerification - Saved file contents:\n{saved_df}")
-    else:
-        print("\nError: File was not created!")
+    print(f"Results saved to results/no_RAG_non-thinking.csv")
 
 if __name__ == "__main__":
     main() 
