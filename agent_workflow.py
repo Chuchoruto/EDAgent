@@ -1,7 +1,8 @@
 import os
 import pandas as pd
-from typing import Dict, TypedDict, List, Optional
+from typing import Dict, TypedDict, List, Optional, Annotated, Union
 from langgraph.graph import Graph, StateGraph
+from langgraph.prebuilt import ToolNode
 from dotenv import load_dotenv
 from google import genai
 from openai import OpenAI
@@ -65,15 +66,21 @@ The output should be a complete Python script enclosed within ```python and ``` 
 
 # Define state
 class AgentState(TypedDict):
-    prompt: str
+    # Input fields
+    original_prompt_gemini: str
+    original_prompt_openai: str
+    retrieved_docs: List[Dict]
+    verification_attempts: int
+    
+    # Drafting outputs
     gemini_draft: Optional[str]
     openai_draft: Optional[str]
+    
+    # Processing outputs
     consolidated_script: Optional[str]
     verification_result: Optional[str]
     corrections: Optional[str]
     final_script: Optional[str]
-    retrieved_docs: List[Dict]
-    verification_attempts: int
 
 def get_relevant_documents(query: str, collection_name: str = COLLECTION_NAME, top_k: int = 5):
     # Connect to Milvus
@@ -131,15 +138,25 @@ class GeminiDraftingAgent:
                 context += "\n\n"
 
             # Combine system prompt, context, and user prompt
-            full_prompt = f"{DRAFTING_PROMPT}\n{context}\nUser request: {state['prompt']}"
+            full_prompt = f"{DRAFTING_PROMPT}\n{context}\nUser request: {state['original_prompt_gemini']}"
+            
+            print("\n=== Gemini Drafting Agent ===")
+            print("Input Prompt:")
+            print(full_prompt)
+            print("\nGenerating response...")
             
             response = gemini_client.models.generate_content(
                 model=self.model_name,
                 contents=full_prompt
             )
             state['gemini_draft'] = response.text
+            
+            print("\nOutput:")
+            print(state['gemini_draft'])
+            print("=" * 50)
         except Exception as e:
             state['gemini_draft'] = f"Error generating response: {str(e)}"
+            print(f"Error in Gemini Drafting Agent: {str(e)}")
         return state
 
 class OpenAIDraftingAgent:
@@ -154,32 +171,52 @@ class OpenAIDraftingAgent:
                 context += "\n\n"
 
             # Combine system prompt, context, and user prompt
-            full_prompt = f"{DRAFTING_PROMPT}\n{context}\nUser request: {state['prompt']}"
+            full_prompt = f"{DRAFTING_PROMPT}\n{context}\nUser request: {state['original_prompt_openai']}"
+            
+            print("\n=== OpenAI Drafting Agent ===")
+            print("Input Prompt:")
+            print(full_prompt)
+            print("\nGenerating response...")
             
             response = openai_client.chat.completions.create(
                 model="gpt-4.1-mini-2025-04-14",
                 messages=[
                     {"role": "system", "content": DRAFTING_PROMPT},
-                    {"role": "user", "content": f"{context}\nUser request: {state['prompt']}"}
+                    {"role": "user", "content": f"{context}\nUser request: {state['original_prompt_openai']}"}
                 ]
             )
             state['openai_draft'] = response.choices[0].message.content
+            
+            print("\nOutput:")
+            print(state['openai_draft'])
+            print("=" * 50)
         except Exception as e:
             state['openai_draft'] = f"Error generating response: {str(e)}"
+            print(f"Error in OpenAI Drafting Agent: {str(e)}")
         return state
 
 class ConsolidationAgent:
     def generate_response(self, state: AgentState) -> AgentState:
         try:
-            full_prompt = f"{CONSOLIDATION_PROMPT}\n\nOriginal prompt: {state['prompt']}\n\nGemini draft:\n{state['gemini_draft']}\n\nOpenAI draft:\n{state['openai_draft']}"
+            full_prompt = f"{CONSOLIDATION_PROMPT}\n\nOriginal prompt: {state['original_prompt_gemini']}\n\nGemini draft:\n{state['gemini_draft']}\n\nOpenAI draft:\n{state['openai_draft']}"
+            
+            print("\n=== Consolidation Agent ===")
+            print("Input Prompt:")
+            print(full_prompt)
+            print("\nGenerating response...")
             
             response = gemini_client.models.generate_content(
                 model="gemini-2.5-flash-preview-04-17",
                 contents=full_prompt
             )
             state['consolidated_script'] = response.text
+            
+            print("\nOutput:")
+            print(state['consolidated_script'])
+            print("=" * 50)
         except Exception as e:
             state['consolidated_script'] = f"Error consolidating scripts: {str(e)}"
+            print(f"Error in Consolidation Agent: {str(e)}")
         return state
 
 class VerificationAgent:
@@ -195,31 +232,51 @@ class VerificationAgent:
                 context += f"Code:\n{doc['code']}\n"
                 context += "\n\n"
 
-            full_prompt = f"{VERIFICATION_PROMPT}\n\nOriginal prompt: {state['prompt']}\n\nScript to verify:\n{state['consolidated_script']}\n{context}"
+            full_prompt = f"{VERIFICATION_PROMPT}\n\nOriginal prompt: {state['original_prompt_gemini']}\n\nScript to verify:\n{state['consolidated_script']}\n{context}"
+            
+            print("\n=== Verification Agent ===")
+            print("Input Prompt:")
+            print(full_prompt)
+            print("\nGenerating response...")
             
             response = gemini_client.models.generate_content(
                 model="gemini-2.5-flash-preview-04-17",
                 contents=full_prompt
             )
             state['verification_result'] = response.text
-            state['retrieved_docs'] = script_docs  # Update retrieved docs for potential corrections
+            state['retrieved_docs'] = script_docs
+            
+            print("\nOutput:")
+            print(state['verification_result'])
+            print("=" * 50)
         except Exception as e:
             state['verification_result'] = f"Error verifying script: {str(e)}"
+            print(f"Error in Verification Agent: {str(e)}")
         return state
 
 class CorrectionAgent:
     def generate_response(self, state: AgentState) -> AgentState:
         try:
-            full_prompt = f"{CORRECTION_PROMPT}\n\nOriginal prompt: {state['prompt']}\n\nScript to correct:\n{state['consolidated_script']}\n\nVerification feedback:\n{state['verification_result']}"
+            full_prompt = f"{CORRECTION_PROMPT}\n\nOriginal prompt: {state['original_prompt_gemini']}\n\nScript to correct:\n{state['consolidated_script']}\n\nVerification feedback:\n{state['verification_result']}"
+            
+            print("\n=== Correction Agent ===")
+            print("Input Prompt:")
+            print(full_prompt)
+            print("\nGenerating response...")
             
             response = gemini_client.models.generate_content(
                 model="gemini-2.5-flash-preview-04-17",
                 contents=full_prompt
             )
-            state['consolidated_script'] = response.text  # Update the consolidated script
+            state['consolidated_script'] = response.text
             state['verification_attempts'] += 1
+            
+            print("\nOutput:")
+            print(state['consolidated_script'])
+            print("=" * 50)
         except Exception as e:
             state['consolidated_script'] = f"Error correcting script: {str(e)}"
+            print(f"Error in Correction Agent: {str(e)}")
         return state
 
 def create_workflow() -> Graph:
@@ -233,17 +290,23 @@ def create_workflow() -> Graph:
     # Create workflow
     workflow = StateGraph(AgentState)
     
-    # Add nodes
-    workflow.add_node("gemini_draft", gemini_drafter.generate_response)
-    workflow.add_node("openai_draft", openai_drafter.generate_response)
-    workflow.add_node("consolidate", consolidator.generate_response)
-    workflow.add_node("verify", verifier.generate_response)
-    workflow.add_node("correct", corrector.generate_response)
+    # Add nodes with distinct names from state keys
+    workflow.add_node("gemini_drafter", gemini_drafter.generate_response)
+    workflow.add_node("openai_drafter", openai_drafter.generate_response)
+    workflow.add_node("consolidator", consolidator.generate_response)
+    workflow.add_node("verifier", verifier.generate_response)
+    workflow.add_node("corrector", corrector.generate_response)
     
-    # Define edges
-    workflow.add_edge("gemini_draft", "consolidate")
-    workflow.add_edge("openai_draft", "consolidate")
-    workflow.add_edge("consolidate", "verify")
+    # Add end node
+    def end_workflow(state: AgentState) -> AgentState:
+        return state
+    
+    workflow.add_node("end", end_workflow)
+    
+    # Define edges in sequence
+    workflow.add_edge("gemini_drafter", "openai_drafter")
+    workflow.add_edge("openai_drafter", "consolidator")
+    workflow.add_edge("consolidator", "verifier")
     
     # Add conditional edge for verification
     def should_correct(state: AgentState) -> bool:
@@ -252,20 +315,19 @@ def create_workflow() -> Graph:
         return "INVALID:" in state['verification_result']
     
     workflow.add_conditional_edges(
-        "verify",
+        "verifier",
         should_correct,
         {
-            True: "correct",
+            True: "corrector",
             False: "end"
         }
     )
     
     # Add edge from correction back to verification
-    workflow.add_edge("correct", "verify")
+    workflow.add_edge("corrector", "verifier")
     
-    # Set entry points
-    workflow.set_entry_point("gemini_draft")
-    workflow.set_entry_point("openai_draft")
+    # Set entry point
+    workflow.set_entry_point("gemini_drafter")
     
     return workflow.compile()
 
@@ -273,40 +335,40 @@ def main():
     # Load benchmark data
     print("Loading benchmark data...")
     df = pd.read_csv("data/bench_data.csv")
-    total_prompts = len(df)
-    print(f"Found {total_prompts} prompts to process")
+    
+    # Only process the first prompt
+    first_prompt = df.iloc[0]
+    print(f"\nProcessing first prompt: {first_prompt['prompt']}")
     
     # Initialize workflow
     workflow = create_workflow()
     
-    # Process all prompts with progress bar
-    results = []
-    for _, row in tqdm(df.iterrows(), total=total_prompts, desc="Processing prompts"):
-        # Get relevant documents
-        relevant_docs = get_relevant_documents(row['prompt'])
-        
-        # Run workflow with retrieved documents
-        initial_state = {
-            "prompt": row['prompt'],
-            "gemini_draft": None,
-            "openai_draft": None,
-            "consolidated_script": None,
-            "verification_result": None,
-            "corrections": None,
-            "final_script": None,
-            "retrieved_docs": relevant_docs,
-            "verification_attempts": 0
-        }
-        
-        result = workflow.invoke(initial_state)
-        results.append({
-            'prompt': result['prompt'],
-            'final_script': result['consolidated_script']
-        })
+    # Get relevant documents
+    relevant_docs = get_relevant_documents(first_prompt['prompt'])
+    
+    # Run workflow with retrieved documents
+    initial_state = {
+        "original_prompt_gemini": first_prompt['prompt'],
+        "original_prompt_openai": first_prompt['prompt'],
+        "gemini_draft": None,
+        "openai_draft": None,
+        "consolidated_script": None,
+        "verification_result": None,
+        "corrections": None,
+        "final_script": None,
+        "retrieved_docs": relevant_docs,
+        "verification_attempts": 0
+    }
+    
+    print("\nStarting workflow...")
+    result = workflow.invoke(initial_state)
     
     # Save results
     print("\nSaving results...")
-    results_df = pd.DataFrame(results)
+    results_df = pd.DataFrame([{
+        'prompt': result['original_prompt_gemini'],  # Using gemini prompt as reference
+        'final_script': result['consolidated_script']
+    }])
     results_df.to_csv("results/multi_agent_results.csv", index=False)
     print("Results saved to results/multi_agent_results.csv")
 
