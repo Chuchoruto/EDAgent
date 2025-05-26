@@ -86,7 +86,23 @@ Results from each benchmark are saved in the `results` directory:
 - `multi_agent_results.csv`: Results from multi-agent workflow
 - (we have also included a "reproduced" directory containing our own reproduction of these initial results)
 
+## Validation in OpenROAD
 
+To validate the results scripts generated from the agent we have to run the OpenROAD flow script to run and test the scripts.
+1. **Procedure:**
+- Inside ORFS flow directory create a new script called flow_script.py and paste the generated script.
+- Update the script manually with the appropriate paths for lib dir, design dir, lef dir and tech lef dir. It is adviced to use "nangate45" as your target PDK and "gcd" as your target design. Script expects a synthesized netlist so you'll have to synthesize gcd using the same "nangate45" pdk.
+- use command openroad -python -exit flow_script.py to run the script and validate. 
+
+Currently we're using EDA corpus v1 as our current RAG database. EDA corpus v1 is an old version and hence some of the APIs have been deprecated and changed in the newer ORFS versions, also there are few errors in the script generated because LLM hallucination hence you might run into some errors while running the flow. Some of the possible errors have been listed.
+
+2. **Possible Errors:**
+- """" quote error: there is an extra quote in some of the API string calls which should be changed to "" .
+- metal layer names "M1" : "nangate45" pdk uses "metal1", "metal2" as the naming convention so change that manually.
+- Run attribute error for the pin placer : pin placer doesn't have any ".run()" method. Use tcl alternative of io placer command instead with -random flag if necessary
+- gpl.doInitialPlace(), gpl.doNesterovPlace() these APIs require no. of threads as an argument. Pass a reasonable integer.
+- provide "verilogFile name" and the appropriate "site name" as an input.
+  
 ## Next Steps (before project presentation)
 - RAG: Integrate EDA-Corpus v2 (improved/larger dataset, different formats) (Flow-v2.xlsx)
 - RAG: Integrate OpenROAD APIs (RAGAPIs.csv)
