@@ -84,3 +84,10 @@ Results from each benchmark are saved in the `results` directory:
 - `RAG_non-thinking.csv`: Results from RAG benchmark
 - `non_RAG_non-thinking.csv`: Results from non-RAG benchmark
 - `multi_agent_results.csv`: Results from multi-agent workflow
+- (we have also included a "reproduced" directory containing our own reproduction of these initial results)
+
+
+## Next Steps (before project presentation)
+- RAG: Integrate EDA-Corpus v2 (improved/larger dataset, different formats) (Flow-v2.xlsx)
+- RAG: Integrate OpenROAD APIs (RAGAPIs.csv)
+- RAG: Integrate OpenROAD sample code pieces (RAGCodePiece.csv)
