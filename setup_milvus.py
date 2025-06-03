@@ -166,16 +166,23 @@ if __name__ == "__main__":
     
     # Example: Search by prompt
     print("\nSearching by prompt:")
-    results = search_similar(collection, "example prompt", search_field="prompt")
+    #prompt_query = "Given a placed design with a clk port called 'clk_i', read the technology file and cell libraries, and set the clock period as 20 ns. Perform floorplan and set the bottom-left location of the bounding box of the die as 0,0 and the top-right corner as 70,70. Set the bottom-left corner of the core's bounding box as 6,6 and the top-right corner as 64,64. After floorplanning, place the macros and the standard cells. Place the macros with a bounding box with the bottom-left corner as 32 um,32 um, and the top-right corner as 55 um,60 um. And place each macro at least 5 um to each other, and set a halo region around each macro as 5 um. Set the iteration of the global router as 10 times. In the detailed placement stage, set the maximum displacement at the x-axis as 0 um, and the y-axis as0. After the placement stage, dump the def file and name it 'placement.def'."
+    prompt_query = "example prompt"
+    results = search_similar(collection, prompt_query, search_field="prompt")
+    print("LEN of results: ", len(results))
     for r in results:
         print(f"Code: {r['code']}")
         print(f"Prompt: {r['prompt']}")
         print(f"Distance: {r['distance']}\n")
+        print("--------------------------------")
     
     # Example: Search by code
     print("\nSearching by code:")
-    results = search_similar(collection, "example code", search_field="code")
+    #code_query = "# Disconnect the nets of the instance 'input1' from the RC network # Get the design block block = design.getBlock() # Find the instance with name 'input1' inst = block.findInst('input1') # Get the pins of the instance pins = inst.getITerms() # Iterate through the pins for pin in pins: # Get the net connected to the pin net = pin.getNet() if net: # Set the RC disconnected flag for the net net.setRCDisconnected(True)"
+    code_query = "example code"
+    results = search_similar(collection, code_query, search_field="code")
     for r in results:
         print(f"Code: {r['code']}")
         print(f"Prompt: {r['prompt']}")
         print(f"Distance: {r['distance']}\n") 
+        print("--------------------------------")
