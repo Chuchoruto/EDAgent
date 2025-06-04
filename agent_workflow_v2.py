@@ -496,8 +496,8 @@ def main():
     # Save all results
     print("\nSaving results...")
     results_df = pd.DataFrame(all_results)
-    results_df.to_csv("results/multi_agent_results_v3.csv", index=False)
-    print("Results saved to results/multi_agent_results_v3.csv")
+    results_df.to_csv("results/multi_agent_results_v4.csv", index=False)
+    print("Results saved to results/multi_agent_results_v4.csv")
     
     # Print summary
     print("\nSummary:")

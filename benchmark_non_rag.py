@@ -20,6 +20,18 @@ SYSTEM_PROMPT = """You are a helpful assistant that generates Python scripts for
 * Assume the user has already set up the OpenROAD environment and has access to the required libraries, LEF files, and Verilog netlists.
 * Prioritize clarity and readability in the generated code.
 * Use descriptive variable names.
+* You must abide by file structure shown in the **Example File Calls** below (i.e., don't assume placeholder directories)
+
+**Example File Calls:**
+libDir = Path("../Design/nangate45/lib") 
+lefDir = Path("../Design/nangate45/lef") 
+designDir = Path("../Design/") 
+design_name = "1_synth" 
+design_top_module_name = "gcd" 
+verilogFile = designDir/str("1_synth.v") 
+verilog_file = designDir / "1_synth.v" 
+site = floorplan.findSite("FreePDK45_38x28_10R_NP_162NW_34O")  
+Clock_port_name = "clk" 
 
 **Output Format:**
 
@@ -61,7 +73,7 @@ def main():
     
     # Load benchmark data
     print("Loading benchmark data...")
-    df = pd.read_csv("data/bench_data.csv")
+    df = pd.read_csv("data/new_RAG_data/bench_data_v2.csv", nrows=10)
     total_prompts = len(df)
     print(f"Found {total_prompts} prompts to process")
     
@@ -84,8 +96,8 @@ def main():
     # Save results
     print("\nSaving results...")
     results_df = pd.DataFrame(results)
-    results_df.to_csv("results/no_RAG_non-thinking.csv", index=False)
-    print(f"Results saved to results/no_RAG_non-thinking.csv")
+    results_df.to_csv("results/no_RAG_non-thinking_v2.csv", index=False)
+    print(f"Results saved to results/no_RAG_non-thinking_v2.csv")
 
 if __name__ == "__main__":
     main() 

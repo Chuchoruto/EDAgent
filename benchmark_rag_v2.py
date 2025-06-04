@@ -225,7 +225,7 @@ def main():
     # Load benchmark data
     print("Loading benchmark data...")
     #df = pd.read_csv("data/bench_data.csv")
-    df = pd.read_csv("data/new_RAG_data/bench_data_v2.csv", nrows=5)
+    df = pd.read_csv("data/new_RAG_data/bench_data_v2.csv", nrows=10)
     total_prompts = len(df)
     print(f"Found {total_prompts} prompts to process")
     

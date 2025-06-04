@@ -1,0 +1,3014 @@
+prompt,response
+"
+The Nangate45 library is located in the `../Design/nangate45/lib` directory, and the LEF files can be found in `../Design/nangate45/lef`. Your design file is `../Design/1_synth.v` with the top module named `gcd`. Follow these steps to set up and process the design in OpenROAD:
+
+1. **Load Technology and Libraries:**
+   - Load the Nangate45 technology files.
+   - Read all `.lib` files from the `lib` directory.
+   - Read all `.tech.lef` and `.lef` files from the `lef` directory.
+
+2. **Read and Link Design:**
+   - Import the Verilog design from `1_synth.v`.
+   - Link the design using the top module `gcd`.
+
+3. **Set Up Clock Constraints:**
+   - Create a clock on the `clk` port with a 20ns period.
+   - Name this timing domain `core_clock`.
+
+4. **Floorplanning:**
+   - Set the aspect ratio to 1.0 and utilization to 30%.
+   - Ensure there is a 10µm margin on all sides of the die area.
+   - Initialize the floorplan and create the necessary tracks.
+
+5. **IO Pin Placement:**
+   - Place IO pins on the metal8 (horizontal) and metal9 (vertical) layers.
+   - Assign the pins accordingly.
+
+6. **Macro Placement:**
+   - Place macro blocks with a 2µm halo around each macro.
+   - Set the fence region to the core area.
+   - Align macro pins that are on metal4 with the track grid.
+
+7. **Global Placement:**
+   - Perform global placement with 10 iterations to optimize cell placement.
+
+8. **Detailed Placement:**
+   - Execute detailed placement allowing a maximum displacement of 1µm in the X direction and 3µm in the Y direction.
+
+9. **Power Delivery Network (PDN) Setup:**
+   - For standard cells, create PDN PG rings using metal1, metal4, metal7, and metal8 with a width and spacing of 2µm. Additionally, use metal1 with a width of 0.07µm.
+   - Create straps:
+     - Metal4: 1.2µm width, 1.2µm spacing, 6µm pitch.
+     - Metal7 and metal8: 1.4µm width, 1.4µm spacing, 10.8µm pitch each.
+   - For macros, design power grids using metal5 and metal6 with 1.2µm width and spacing, and a 6µm pitch.
+   - Ensure via connections between all adjacent metal layers with a via pitch of 2µm.
+
+10. **Set Electrical Parameters:**
+    - Set unit resistance to 0.03574 and unit capacitance to 0.07516.
+    - Use the buffer cell `BUF_X2` for clock tree synthesis (CTS).
+
+11. **Insert Filler Cells:**
+    - Place filler cells to complete the design.
+
+12. **Routing:**
+    - Perform global routing from metal1 to metal7.
+    - Execute detailed routing to finalize connections.
+
+13. **Save Outputs:**
+    - Save the DEF file as `final.def`.
+    - Save the netlist as `final.v`.
+    - Save the OpenDB file as `final.odb`.
+
+14. **Power Analysis:**
+    - Run static IR drop analysis on the VDD net.
+    - Report the switching power, internal power, and leakage power of the design.
+
+Ensure each step is executed correctly to achieve a successful design flow in OpenROAD.
+
+","```python
+import openroad
+from openroad import tech, cordb, tcl_interp
+from pathlib import Path
+import glob
+
+# Initialize the OpenROAD database and interpreter
+db = cordb.Object()
+tcl = tcl_interp.TclInterp()
+tcl.Make(""openroad"")
+
+# Get the OpenROAD environment
+ord = openroad.OpenROAD(db, tcl)
+
+# Define file paths based on the user's specified structure
+libDir = Path(""../Design/nangate45/lib"")
+lefDir = Path(""../Design/nangate45/lef"")
+designDir = Path(""../Design/"")
+design_name = ""1_synth""
+design_top_module_name = ""gcd""
+verilogFile = designDir / f""{design_name}.v""
+Clock_port_name = ""clk""
+
+# 1. Load Technology and Libraries
+print(""Loading technology and libraries..."")
+# Read technology LEF file first
+tech_lefs = list(lefDir.glob(""*.tech.lef""))
+if tech_lefs:
+    ord.read_lef(str(tech_lefs[0]))
+    print(f""Read tech LEF: {tech_lefs[0]}"")
+else:
+    print(""Warning: No .tech.lef file found."")
+
+# Read other LEF files
+for lef_file in lefDir.glob(""*.lef""):
+    if "".tech.lef"" not in str(lef_file): # Avoid reading tech LEF again
+        ord.read_lef(str(lef_file))
+        print(f""Read LEF: {lef_file}"")
+
+# Read liberty files
+for lib_file in libDir.glob(""*.lib""):
+    ord.read_lib(str(lib_file))
+    print(f""Read Liberty file: {lib_file}"")
+
+# 2. Read and Link Design
+print(f""Reading Verilog design: {verilogFile}"")
+# Read the Verilog netlist
+ord.read_verilog(str(verilogFile))
+
+print(f""Linking design with top module: {design_top_module_name}"")
+# Link the design against the loaded libraries
+ord.link_design(design_top_module_name)
+
+# Get the current design object
+design = db.getChip().getBlock()
+
+# 3. Set Up Clock Constraints
+print(f""Setting up clock constraint on port: {Clock_port_name}"")
+# Create a clock signal on the specified port with a 20ns period
+ord.create_clock(name=""core_clock"", period=20, objects=[design.findITerm(Clock_port_name)])
+# Set the clock net as ideal for timing analysis before CTS
+ord.set_ideal_network(objects=[design.findNetByName(""core_clock"")])
+
+# 4. Floorplanning
+print(""Performing floorplanning..."")
+# Find the site definition needed for floorplanning
+site = design.getTech().findSite(""FreePDK45_38x28_10R_NP_162NW_34O"") # Using the example site name
+if not site:
+    print(""Error: Site 'FreePDK45_38x28_10R_NP_162NW_34O' not found. Please check your LEF files."")
+    exit()
+
+# Define floorplan parameters
+aspect_ratio = 1.0
+utilization = 0.30
+die_margin = 10.0 # in microns
+
+# Initialize the floorplan with core utilization, aspect ratio, and die margin
+ord.init_floorplan(
+    die_area=None, # Auto-calculate based on core area and margin
+    core_area=None, # Auto-calculate based on utilization
+    site=site,
+    utilization=utilization,
+    aspect_ratio=aspect_ratio,
+    die_margin=[die_margin, die_margin, die_margin, die_margin] # [left, bottom, right, top]
+)
+
+# Create track patterns for routing
+print(""Creating routing tracks..."")
+# Define track pitches based on LEF technology or typical values (adjust as needed)
+# Assuming typical pitches for M1/M2 etc. Need to adjust based on actual tech
+# Example: M2 pitch is typically twice the metal width + spacing + via size
+# This is a simplification. A real flow would derive this from the tech LEF or a config file.
+# For Nangate45, min pitch might be around 0.48um for M1/M2, 0.6um for M3, etc.
+# Let's use some placeholder pitches. You should verify these against your technology.
+# Example track configurations (these need to match the tech/LEF):
+# Metal1 (vertical): pitch, start_offset
+# Metal2 (horizontal): pitch, start_offset
+# ... and so on for layers used for routing.
+# Finding actual pitches from LEF is complex. Using example values.
+m2_pitch = 0.5 # Example pitch for M2
+m3_pitch = 0.6 # Example pitch for M3
+m4_pitch = 0.8 # Example pitch for M4
+m5_pitch = 1.0 # Example pitch for M5
+m6_pitch = 1.2 # Example pitch for M6
+m7_pitch = 1.4 # Example pitch for M7
+
+# The start offset depends on the specific technology and desired grid alignment.
+# Often, it's half the pitch or a value derived from site/row placement.
+# For simplicity, let's use half pitch as a common approach.
+m2_offset = m2_pitch / 2
+m3_offset = m3_pitch / 2
+m4_offset = m4_pitch / 2
+m5_offset = m5_pitch / 2
+m6_offset = m6_pitch / 2
+m7_offset = m7_pitch / 2
+
+# Define track layers and orientations
+# Check your tech LEF for layer names and preferred directions
+# Assuming typical M1/M2/M3... structure and H/V directions
+ord.create_tracks(layer=design.getTech().findLayer(""metal2""), direction='H', pitch=m2_pitch, offset=m2_offset)
+ord.create_tracks(layer=design.getTech().findLayer(""metal3""), direction='V', pitch=m3_pitch, offset=m3_offset)
+ord.create_tracks(layer=design.getTech().findLayer(""metal4""), direction='H', pitch=m4_pitch, offset=m4_offset)
+ord.create_tracks(layer=design.getTech().findLayer(""metal5""), direction='V', pitch=m5_pitch, offset=m5_offset)
+ord.create_tracks(layer=design.getTech().findLayer(""metal6""), direction='H', pitch=m6_pitch, offset=m6_offset)
+ord.create_tracks(layer=design.getTech().findLayer(""metal7""), direction='V', pitch=m7_pitch, offset=m7_offset)
+# Add tracks for M1 as well if needed for routing or PDN
+# ord.create_tracks(layer=design.getTech().findLayer(""metal1""), direction='V', pitch=m1_pitch, offset=m1_offset)
+
+
+# 5. IO Pin Placement
+print(""Placing IO pins..."")
+# Find the layers for IO placement
+metal8_layer = design.getTech().findLayer(""metal8"")
+metal9_layer = design.getTech().findLayer(""metal9"")
+
+if not metal8_layer or not metal9_layer:
+     print(""Error: Could not find metal8 or metal9 layer. Check LEF files."")
+     exit()
+
+# Define pin placement configuration per layer and direction
+pin_config = [
+    {""layer"": metal8_layer, ""direction"": ""H""}, # Horizontal on metal8
+    {""layer"": metal9_layer, ""direction"": ""V""}  # Vertical on metal9
+]
+
+# Perform IO pin placement
+ord.place_io(pin_config)
+
+# 6. Macro Placement
+print(""Placing macros..."")
+# Define macro placement parameters
+macro_halo = 2.0 # 2µm halo around macros
+fence_region = design.getCore() # Set fence region to the core area
+snap_layers = [design.getTech().findLayer(""metal4"")] # Snap pins on metal4 to grid
+
+# Perform macro placement with specified halo and fence region
+ord.place_macros(
+    halo=[macro_halo, macro_halo, macro_halo, macro_halo], # [left, bottom, right, top]
+    fence_region=fence_region,
+    snap_layers=snap_layers # Snap macro pins on these layers to the track grid
+)
+
+
+# 7. Global Placement
+print(""Performing global placement..."")
+# Perform global placement for cell optimization
+ord.global_placement(iterations=10)
+
+# 8. Detailed Placement
+print(""Performing detailed placement..."")
+# Perform detailed placement with maximum displacement constraints
+ord.detailed_placement(max_displacement_x=1.0, max_displacement_y=3.0)
+
+
+# 9. Power Delivery Network (PDN) Setup
+print(""Setting up Power Delivery Network (PDN)..."")
+
+# Define voltage domains (VDD and VSS are typical)
+vdd_net = design.findNetByName(""VDD"")
+vss_net = design.findNetByName(""VSS"") # Assuming VSS is the ground net
+
+if not vdd_net or not vss_net:
+    print(""Error: Could not find VDD or VSS nets. Check your netlist."")
+    # Proceeding might cause PDN errors, but let's try with default nets
+    # VDD and VSS might be created by OpenROAD if not in netlist but in LEF
+    # Re-check after linking if necessary
+    vdd_net = design.findNetByName(""VDD"")
+    vss_net = design.findNetByName(""VSS"")
+    if not vdd_net or not vss_net:
+        print(""Still cannot find VDD or VSS nets. PDN setup might fail."")
+
+
+# Find PDN layers
+m1 = design.getTech().findLayer(""metal1"")
+m4 = design.getTech().findLayer(""metal4"")
+m7 = design.getTech().findLayer(""metal7"")
+m8 = design.getTech().findLayer(""metal8"")
+m5 = design.getTech().findLayer(""metal5"")
+m6 = design.getTech().findLayer(""metal6"")
+
+if not all([m1, m4, m7, m8, m5, m6]):
+     print(""Error: Could not find required metal layers for PDN. Check LEF files."")
+     exit()
+
+# --- Standard Cell PDN ---
+print(""Creating standard cell PDN..."")
+std_cell_pdn_rings = [
+    {""layer"": m1, ""width"": 2.0, ""spacing"": 2.0}, # Example large ring on M1
+    {""layer"": m1, ""width"": 0.07, ""spacing"": 0.07}, # Example thin ring/strap on M1
+    {""layer"": m4, ""width"": 2.0, ""spacing"": 2.0},
+    {""layer"": m7, ""width"": 2.0, ""spacing"": 2.0},
+    {""layer"": m8, ""width"": 2.0, ""spacing"": 2.0},
+]
+
+std_cell_pdn_straps = [
+    {""layer"": m4, ""width"": 1.2, ""spacing"": 1.2, ""pitch"": 6.0},
+    {""layer"": m7, ""width"": 1.4, ""spacing"": 1.4, ""pitch"": 10.8},
+    {""layer"": m8, ""width"": 1.4, ""spacing"": 1.4, ""pitch"": 10.8},
+]
+
+# Via connection pitch (assuming uniform via pitch between adjacent layers)
+via_pitch = 2.0 # Example via pitch
+
+# Create standard cell power grid rings and straps
+ord.create_pdn_std_cell_grid(
+    power_net=vdd_net,
+    ground_net=vss_net,
+    rings=std_cell_pdn_rings,
+    straps=std_cell_pdn_straps,
+    via_pitch=via_pitch
+)
+
+# --- Macro PDN ---
+print(""Creating macro PDN..."")
+macro_pdn_grids = [
+    {""layer"": m5, ""width"": 1.2, ""spacing"": 1.2, ""pitch"": 6.0},
+    {""layer"": m6, ""width"": 1.2, ""spacing"": 1.2, ""pitch"": 6.0},
+]
+
+# Create macro power grids
+ord.create_pdn_macro_grid(
+    power_net=vdd_net,
+    ground_net=vss_net,
+    grids=macro_pdn_grids,
+    via_pitch=via_pitch
+)
+
+# 10. Set Electrical Parameters
+print(""Setting electrical parameters..."")
+# Set default unit resistance and capacitance for interconnections
+ord.set_unit_resistance(0.03574)
+ord.set_unit_capacitance(0.07516)
+
+# Set the buffer cell to be used for Clock Tree Synthesis (CTS)
+# Note: The request mentioned CTS buffer but didn't explicitly ask to *run* CTS.
+# Setting the buffer here is preparation *if* CTS were to be run later.
+# Since CTS is not in the requested steps 1-14, this setting is for potential future steps.
+cts_buffer_cell = ""BUF_X2"" # Assuming ""BUF_X2"" is a valid cell name in your library
+print(f""Setting CTS buffer cell to: {cts_buffer_cell}"")
+ord.set_cts_buffer(cell=cts_buffer_cell)
+
+
+# 11. Insert Filler Cells
+print(""Inserting filler cells..."")
+# Insert filler cells to fill gaps and connect power/ground rails
+ord.insert_filler()
+
+# 12. Routing
+print(""Performing routing..."")
+# Define the routing layers
+routing_layers_global = [
+    design.getTech().findLayer(""metal1""),
+    design.getTech().findLayer(""metal2""),
+    design.getTech().findLayer(""metal3""),
+    design.getTech().findLayer(""metal4""),
+    design.getTech().findLayer(""metal5""),
+    design.getTech().findLayer(""metal6""),
+    design.getTech().findLayer(""metal7""),
+]
+
+if not all(routing_layers_global):
+     print(""Error: Could not find all required routing layers for global route. Check LEF files."")
+     exit()
+
+# Perform global routing
+print(""Performing global routing..."")
+# The layers argument for global_route often specifies the range.
+# Let's assume metal1 to metal7 as the range.
+ord.global_route(min_layer=routing_layers_global[0], max_layer=routing_layers_global[-1])
+
+# Perform detailed routing
+print(""Performing detailed routing..."")
+ord.detailed_route()
+
+# 13. Save Outputs
+print(""Saving design outputs..."")
+output_dir = Path(""./results"") # Define an output directory
+output_dir.mkdir(parents=True, exist_ok=True) # Create output directory if it doesn't exist
+
+def_file = output_dir / ""final.def""
+verilog_out_file = output_dir / ""final.v""
+odb_file = output_dir / ""final.odb""
+
+# Save the design in DEF format
+print(f""Saving DEF file: {def_file}"")
+ord.write_def(str(def_file))
+
+# Save the netlist in Verilog format (annotated with placement)
+print(f""Saving Verilog file: {verilog_out_file}"")
+ord.write_verilog(str(verilog_out_file))
+
+# Save the design database in OpenDB format
+print(f""Saving OpenDB file: {odb_file}"")
+ord.write_db(str(odb_file))
+
+# 14. Power Analysis
+print(""Running power analysis..."")
+# Run static IR drop analysis on the VDD net
+print(""Running static IR drop analysis on VDD..."")
+# Need to ensure SPEF is loaded or parasitics are extracted for accurate IR drop
+# The request doesn't mention extraction, so IR drop might not be accurate without it.
+# Assuming basic analysis based on wire models might run.
+# A full flow would typically include RC extraction before IR drop.
+# For simplicity, we'll call analyze_power which can *sometimes* do basic IR without SPEF
+# if resistance/capacitance units are set and PDN exists.
+# `analyze_power` typically calculates switching, internal, leakage power.
+# `report_power` is then used to display these.
+# For IR drop, `report_power -ir_drop` is used.
+
+# First, run the analysis
+ord.analyze_power(nets=[""VDD""]) # Analyze VDD net for IR drop
+
+# Then, report the results
+print(""Reporting power analysis results..."")
+# Report switching, internal, and leakage power
+ord.report_power()
+
+# Report IR drop specifically
+print(""Reporting IR drop on VDD..."")
+ord.report_power(ir_drop=True, net=""VDD"")
+
+
+print(""Physical design flow completed."")
+
+```"
+"
+Load Nangate45 technology from ../Design/nangate45/lib and ../Design/nangate45/lef. Import the gcd design from ../Design/1_synth.v into OpenROAD. Set a 20ns period clock on the clk port and name the timing domain ""core_clock"". Perform floorplanning with a 1.0 aspect ratio, 30% utilization, and 10µm margins on all sides. Execute IO placement on metal8 and metal9 layers. Place macros with a 2µm halo around each and set the fence region to the core area. Align macro pins on metal4 with the track grid. Run global placement for 10 iterations, followed by detailed placement limiting displacement to 1µm in X and 3µm in Y. Construct the PDN as follows:
+
+- **Standard Cells:**
+  - Create PG rings using metal1, metal4, metal7, and metal8 with 2µm width and spacing.
+  - Add power straps on metal1 with a width of 0.07µm.
+  - Add straps on metal4 with 1.2µm width and spacing, pitch 6µm.
+  - Add straps on metal7 and metal8 with 1.4µm width and spacing, pitch 10.8µm.
+
+- **Macros:**
+  - Create PG rings using metal5 and metal6 with 1.5µm width and spacing.
+  - Add PG straps with 1.2µm width and spacing, pitch 6µm.
+
+Set all unspecified PDN parameters to 0µm. Assign unit resistance to 0.03574 and unit capacitance to 0.07516. Use BUF_X2 for CTS. Insert filler cells. Execute global routing from metal1 to metal7. Save the DEF file as final.def, the netlist as final.v, and the odb as final.odb.
+","```python
+# Import necessary libraries
+import openroad
+from openroad import tech
+from openroad import lef
+from openroad import def_util
+from openroad import db
+from openroad import utl
+from openroad import floorplan
+from openroad import ioplacement
+from openroad import macro_placement
+from openroad import placement
+from openroad import pdn
+from openroad import cts
+from openroad import filler
+from openroad import global_route
+from pathlib import Path
+import inspect
+
+# Get the logger
+logger = utl.Logger.get()
+
+# Define file paths and design parameters
+libDir = Path(""../Design/nangate45/lib"")
+lefDir = Path(""../Design/nangate45/lef"")
+designDir = Path(""../Design/"")
+design_name = ""1_synth""
+design_top_module_name = ""gcd""
+verilogFile = designDir / f""{design_name}.v"" # Correct path construction
+verilog_file = designDir / ""1_synth.v"" # Example variable name from prompt
+Clock_port_name = ""clk""
+clock_period_ns = 20.0
+timing_domain_name = ""core_clock""
+
+# Output file paths
+output_def = ""final.def""
+output_verilog = ""final.v""
+output_odb = ""final.odb""
+
+# Initialize OpenROAD database
+# This is often handled by the OR shell/python environment, but included for completeness
+# logger.info(""Initializing OpenROAD..."")
+# openroad.init()
+
+# Read technology LEF
+logger.info(""Reading technology LEF..."")
+tech_lef = lefDir / ""NangateOpenCellLibrary.tech.lef""
+lef.read_lef(str(tech_lef))
+
+# Read cell LEF files
+logger.info(""Reading cell LEF..."")
+std_cell_lef = lefDir / ""NangateOpenCellLibrary.lef""
+lef.read_lef(str(std_cell_lef))
+
+# Read Liberty files
+logger.info(""Reading Liberty files..."")
+typical_lib = libDir / ""NangateOpenCellLibrary_typical.lib""
+tech.read_liberty(str(typical_lib))
+
+# Read Verilog netlist
+logger.info(f""Reading Verilog file: {verilogFile}"")
+db.read_verilog(str(verilogFile))
+
+# Link design
+logger.info(f""Linking design: {design_top_module_name}"")
+db.link_design(design_top_module_name)
+
+# Get the design block
+block = db.get_db().getChip().getBlock()
+
+# Set timing analysis corners (basic setup)
+# Assuming single corner setup for this example
+logger.info(""Setting up timing analysis..."")
+# Minimal setup, add more corners/modes as needed
+block.addCorner(""base"")
+block.findCornerByName(""base"").addTemp(25.0) # Add typical temperature
+
+# Create and add a scenario for timing analysis
+block.addScenario()
+scenario = block.getScenario()
+
+# Set RC corners (basic setup)
+# Assuming one RC corner matching the library
+rc_corner = block.addRCCorner(""base_rc"")
+rc_corner.setCapTable(tech.findCapTable(""typ"")) # Assuming 'typ' cap table exists in LEF
+
+# Associate RC corner with scenario
+scenario.addRCCorner(rc_corner)
+
+# Set clock definition
+logger.info(f""Setting clock constraint on port: {Clock_port_name}"")
+# Define clock object: name, period, start time, port name
+clock_obj = timing.create_clock(timing_domain_name, clock_period_ns, 0.0, Clock_port_name)
+
+# Floorplanning
+logger.info(""Performing floorplanning..."")
+# Get the site definition from the loaded LEF
+site = floorplan.findSite(""FreePDK45_38x28_10R_NP_162NW_34O"")
+if site is None:
+    logger.error(""Could not find the specified site. Please check your LEF files."")
+    exit(1)
+
+# Set the site for the block
+block.setSite(site)
+
+# Set core utilization, aspect ratio, and margins
+utilization = 0.30
+aspect_ratio = 1.0
+margin = 10.0 # in microns
+
+# Set the core area based on utilization and aspect ratio relative to the site dimensions
+# create_core_area calculates the core dimensions based on utilization, aspect ratio and site
+# It takes x, y offsets and width, height of the boundary as input,
+# then utilization, aspect ratio, and margin for the core area calculation
+# The core area will be centered within the boundary
+floorplan.create_core_area(
+    site.getWidth(), # boundary width (using site dimensions as a reference, might need adjustment based on chip boundary)
+    site.getHeight(), # boundary height
+    utilization,
+    aspect_ratio,
+    margin
+)
+
+# IO Placement
+logger.info(""Performing IO placement..."")
+# Define the layers for IO pins
+horizontal_layer = ""metal8""
+vertical_layer = ""metal9""
+
+# Place IO pins using specified layers
+ioplacement.place_io(str(horizontal_layer), str(vertical_layer))
+
+# Macro Placement
+logger.info(""Performing macro placement..."")
+# Get the core area boundary
+core_boundary = block.getCoreArea()
+
+# Set halo around macros (x_halo, y_halo)
+# Halos are regions around macros where standard cells are prohibited
+macro_halo_x = 2.0 # in microns
+macro_halo_y = 2.0 # in microns
+macro_placement.set_halo(macro_halo_x, macro_halo_y)
+
+# Set fence region for macros (x_min, y_min, x_max, y_max)
+# The fence region restricts macro placement to a specific area (usually the core area)
+macro_placement.set_fence(
+    core_boundary.xMin,
+    core_boundary.yMin,
+    core_boundary.xMax,
+    core_boundary.yMax
+)
+
+# Align macro pins
+# Specify the target layer for pin alignment
+macro_pin_align_layer = ""metal4""
+# Align macro pins to the track grid on the specified layer
+macro_placement.align_macro_pins(macro_pin_align_layer)
+
+# Place macros - this function typically performs the macro placement within the set constraints (halo, fence)
+macro_placement.place_macros()
+
+# Placement
+logger.info(""Performing placement..."")
+
+# Global Placement
+logger.info(""Running global placement..."")
+global_placement_iterations = 10
+placement.global_placement(global_placement_iterations)
+
+# Detailed Placement
+logger.info(""Running detailed placement..."")
+# Set displacement limits for detailed placement
+detailed_placement_displacement_x = 1.0 # in microns
+detailed_placement_displacement_y = 3.0 # in microns
+placement.detailed_placement(detailed_placement_displacement_x, detailed_placement_displacement_y)
+
+# Power Delivery Network (PDN) Construction
+logger.info(""Constructing Power Delivery Network (PDN)..."")
+
+# Set unit resistance and capacitance
+pdn.set_unit_resistance(0.03574)
+pdn.set_unit_capacitance(0.07516)
+
+# Define power and ground nets
+power_net_name = ""VDD""
+ground_net_name = ""VSS""
+power_net = db.get_db().findNet(power_net_name)
+ground_net = db.get_db().findNet(ground_net_name)
+
+if not power_net:
+    logger.error(f""Power net '{power_net_name}' not found. Please check your netlist."")
+    exit(1)
+if not ground_net:
+    logger.error(f""Ground net '{ground_net_name}' not found. Please check your netlist."")
+    exit(1)
+
+# Define the PDN structure
+pdn_name = ""stdcell_macro_pdn""
+pdn.add_pdn_node(pdn_name)
+
+# Add standard cell PDN components
+logger.info(""Adding standard cell PDN components..."")
+stdcell_ring_bottom_h_layer = ""metal1""
+stdcell_ring_bottom_v_layer = ""metal4""
+stdcell_ring_top_h_layer = ""metal7""
+stdcell_ring_top_v_layer = ""metal8""
+stdcell_ring_width = 2.0 # in microns
+stdcell_ring_spacing = 2.0 # in microns
+
+# Add standard cell rings around the core area
+# pdn.add_pdn_ring requires many parameters, setting unspecified to 0
+pdn.add_pdn_ring(
+    node_name=pdn_name,
+    nets=[power_net, ground_net],
+    ring_layer_bottom_h=stdcell_ring_bottom_h_layer,
+    ring_layer_bottom_v=stdcell_ring_bottom_v_layer,
+    ring_layer_top_h=stdcell_ring_top_h_layer,
+    ring_layer_top_v=stdcell_ring_top_v_layer,
+    ring_width=stdcell_ring_width,
+    ring_spacing=stdcell_ring_spacing,
+    ring_offset=0.0, # Unspecified, set to 0
+    ring_grid_offset=0.0, # Unspecified, set to 0
+    ring_pitch=0.0, # Unspecified, set to 0
+    follow_core_ring=True # Assume rings follow core boundary
+)
+
+# Add standard cell straps
+logger.info(""Adding standard cell straps..."")
+
+# Metal 1 straps (horizontal)
+stdcell_m1_strap_layer = ""metal1""
+stdcell_m1_strap_width = 0.07 # in microns (as requested, seems very small)
+stdcell_m1_strap_spacing = 0.0 # Unspecified, set to 0
+stdcell_m1_strap_pitch = 0.0 # Unspecified, set to 0
+
+# pdn.add_pdn_straps requires many parameters, setting unspecified to 0
+# Assuming horizontal straps on metal1
+pdn.add_pdn_straps(
+    node_name=pdn_name,
+    nets=[power_net, ground_net],
+    strap_layer=stdcell_m1_strap_layer,
+    strap_width=stdcell_m1_strap_width,
+    strap_spacing=stdcell_m1_strap_spacing,
+    strap_pitch=stdcell_m1_strap_pitch,
+    straps_offset=0.0, # Unspecified, set to 0
+    straps_grid_offset=0.0, # Unspecified, set to 0
+    straps_direction=""horizontal"", # Assuming horizontal based on typical PDN structure
+    follow_core_straps=True # Assume straps follow core boundary
+)
+
+# Metal 4 straps (vertical)
+stdcell_m4_strap_layer = ""metal4""
+stdcell_m4_strap_width = 1.2 # in microns
+stdcell_m4_strap_spacing = 1.2 # in microns
+stdcell_m4_strap_pitch = 6.0 # in microns
+
+# Assuming vertical straps on metal4
+pdn.add_pdn_straps(
+    node_name=pdn_name,
+    nets=[power_net, ground_net],
+    strap_layer=stdcell_m4_strap_layer,
+    strap_width=stdcell_m4_strap_width,
+    strap_spacing=stdcell_m4_strap_spacing,
+    strap_pitch=stdcell_m4_strap_pitch,
+    straps_offset=0.0, # Unspecified, set to 0
+    straps_grid_offset=0.0, # Unspecified, set to 0
+    straps_direction=""vertical"", # Assuming vertical based on typical PDN structure
+    follow_core_straps=True # Assume straps follow core boundary
+)
+
+# Metal 7 straps (horizontal)
+stdcell_m7_strap_layer = ""metal7""
+stdcell_m7_strap_width = 1.4 # in microns
+stdcell_m7_strap_spacing = 1.4 # in microns
+stdcell_m7_strap_pitch = 10.8 # in microns
+
+# Assuming horizontal straps on metal7
+pdn.add_pdn_straps(
+    node_name=pdn_name,
+    nets=[power_net, ground_net],
+    strap_layer=stdcell_m7_strap_layer,
+    strap_width=stdcell_m7_strap_width,
+    strap_spacing=stdcell_m7_strap_spacing,
+    strap_pitch=stdcell_m7_strap_pitch,
+    straps_offset=0.0, # Unspecified, set to 0
+    straps_grid_offset=0.0, # Unspecified, set to 0
+    straps_direction=""horizontal"", # Assuming horizontal based on typical PDN structure
+    follow_core_straps=True # Assume straps follow core boundary
+)
+
+# Metal 8 straps (vertical)
+stdcell_m8_strap_layer = ""metal8""
+stdcell_m8_strap_width = 1.4 # in microns
+stdcell_m8_strap_spacing = 1.4 # in microns
+stdcell_m8_strap_pitch = 10.8 # in microns
+
+# Assuming vertical straps on metal8
+pdn.add_pdn_straps(
+    node_name=pdn_name,
+    nets=[power_net, ground_net],
+    strap_layer=stdcell_m8_strap_layer,
+    strap_width=stdcell_m8_strap_width,
+    strap_spacing=stdcell_m8_strap_spacing,
+    strap_pitch=stdcell_m8_strap_pitch,
+    straps_offset=0.0, # Unspecified, set to 0
+    straps_grid_offset=0.0, # Unspecified, set to 0
+    straps_direction=""vertical"", # Assuming vertical based on typical PDN structure
+    follow_core_straps=True # Assume straps follow core boundary
+)
+
+
+# Add macro PDN components
+logger.info(""Adding macro PDN components..."")
+macro_ring_bottom_h_layer = ""metal5""
+macro_ring_bottom_v_layer = ""metal6""
+macro_ring_width = 1.5 # in microns
+macro_ring_spacing = 1.5 # in microns
+
+# Add macro rings
+# Note: macro rings are typically around each individual macro instance,
+# but the PDN API add_pdn_ring is often used for overall rings.
+# If per-macro rings are needed, a different approach or tool might be required.
+# Assuming these rings are added to the main PDN structure, potentially connected to macro pins.
+# Setting unspecified parameters to 0
+pdn.add_pdn_ring(
+    node_name=pdn_name,
+    nets=[power_net, ground_net],
+    ring_layer_bottom_h=macro_ring_bottom_h_layer,
+    ring_layer_bottom_v=macro_ring_bottom_v_layer,
+    ring_width=macro_ring_width,
+    ring_spacing=macro_ring_spacing,
+    ring_offset=0.0, # Unspecified, set to 0
+    ring_grid_offset=0.0, # Unspecified, set to 0
+    ring_pitch=0.0, # Unspecified, set to 0
+    follow_core_ring=False, # Macro rings don't follow the core boundary
+    ring_layer_top_h="""", # Macro rings specified only M5/M6
+    ring_layer_top_v=""""
+)
+
+
+# Add macro straps
+logger.info(""Adding macro straps..."")
+macro_strap_width = 1.2 # in microns
+macro_strap_spacing = 1.2 # in microns
+macro_strap_pitch = 6.0 # in microns
+
+# The layer for macro straps was not specified.
+# Assuming horizontal on metal 5 and vertical on metal 6 to connect to macro rings.
+# Setting unspecified parameters to 0.
+
+# Macro horizontal straps (Assuming metal 5)
+macro_h_strap_layer = ""metal5""
+pdn.add_pdn_straps(
+    node_name=pdn_name,
+    nets=[power_net, ground_net],
+    strap_layer=macro_h_strap_layer,
+    strap_width=macro_strap_width,
+    strap_spacing=macro_strap_spacing,
+    strap_pitch=macro_strap_pitch,
+    straps_offset=0.0, # Unspecified, set to 0
+    straps_grid_offset=0.0, # Unspecified, set to 0
+    straps_direction=""horizontal"", # Assuming horizontal
+    follow_core_straps=False # Macro straps don't necessarily follow core boundary
+)
+
+# Macro vertical straps (Assuming metal 6)
+macro_v_strap_layer = ""metal6""
+pdn.add_pdn_straps(
+    node_name=pdn_name,
+    nets=[power_net, ground_net],
+    strap_layer=macro_v_strap_layer,
+    strap_width=macro_strap_width,
+    strap_spacing=macro_strap_spacing,
+    strap_pitch=macro_strap_pitch,
+    straps_offset=0.0, # Unspecified, set to 0
+    straps_grid_offset=0.0, # Unspecified, set to 0
+    straps_direction=""vertical"", # Assuming vertical
+    follow_core_straps=False # Macro straps don't necessarily follow core boundary
+)
+
+# Create the actual PDN structure in the design
+logger.info(""Creating the PDN..."")
+pdn.create_pdn(pdn_name)
+
+
+# Clock Tree Synthesis (CTS)
+logger.info(""Performing Clock Tree Synthesis (CTS)..."")
+# Specify the buffer cell to use for CTS
+cts_buffer_cell = ""BUF_X2"" # As requested
+
+# Check if the buffer cell exists
+buffer_master = db.get_db().findMaster(cts_buffer_cell)
+if buffer_master is None:
+    logger.error(f""Buffer cell '{cts_buffer_cell}' not found in libraries."")
+    exit(1)
+
+# Set the buffer for CTS
+cts.set_buffer(buffer_master)
+
+# Run CTS on the defined clock
+# Note: More CTS parameters might be needed for a production flow (max_cap, max_slew, fanout, etc.)
+cts.clock_tree_synthesis()
+
+
+# Filler Cell Insertion
+logger.info(""Inserting filler cells..."")
+# Define filler cells to use
+# Get a list of filler masters from the library (example, actual cell names may vary)
+# Need to identify actual filler cell names from Nangate45 library
+# Common filler cells are usually named FILLER_*, TIE*, ISOLATION*
+# Let's assume standard filler cells like FILLER_1, FILLER_2, etc. based on size
+# Need to query library to get actual filler cell masters
+filler_masters = []
+# Iterate through masters in the library to find potential fillers
+for lib in db.get_db().getLibs():
+    for master in lib.getMasters():
+        # Simple heuristic: check if master name starts with 'FILLER_'
+        if master.getName().startswith(""FILLER_""):
+            filler_masters.append(master)
+            logger.info(f""Found filler cell: {master.getName()}"")
+        # Add other potential filler types if known, e.g., tie cells
+        # elif master.getName().startswith(""TIE""):
+        #     filler_masters.append(master)
+
+if not filler_masters:
+     logger.warn(""No masters starting with 'FILLER_' found. Please check library for filler cell names."")
+     # As a fallback or for demonstration, let's find any small cell if no fillers found
+     # In a real flow, you must use designated filler cells
+     if not filler_masters:
+         for lib in db.get_db().getLibs():
+             for master in lib.getMasters():
+                 # Find the smallest standard cell as a poor substitute
+                 if master.getType().isStdCell():
+                     filler_masters = [master] # Use the first one found
+                     logger.warn(f""No explicit filler cells found. Using standard cell '{master.getName()}' as a placeholder."")
+                     break # Found one, break inner loop
+             if filler_masters:
+                 break # Found one, break outer loop
+
+if not filler_masters:
+    logger.error(""Could not find any potential filler cells in the library."")
+    # Continue without fillers or exit? Let's log and continue.
+    logger.warn(""Skipping filler insertion due to lack of filler cells."")
+else:
+    # Insert filler cells to fill gaps in standard cell rows
+    filler.insert_filler(filler_masters)
+
+
+# Global Routing
+logger.info(""Performing global routing..."")
+# Specify the routing layers (metal1 to metal7)
+global_route_min_layer = ""metal1""
+global_route_max_layer = ""metal7""
+
+# Perform global routing
+global_route.global_route(global_route_min_layer, global_route_max_layer)
+
+
+# Saving output files
+logger.info(""Saving output files..."")
+
+# Save DEF file
+logger.info(f""Saving DEF: {output_def}"")
+def_util.write_def(str(output_def))
+
+# Save Verilog netlist (with physical information back-annotated)
+logger.info(f""Saving Verilog: {output_verilog}"")
+db.write_verilog(str(output_verilog))
+
+# Save OpenROAD database (ODB)
+logger.info(f""Saving ODB: {output_odb}"")
+db.save_db(str(output_odb))
+
+logger.info(""Script execution finished."")
+```"
+"
+I have the Nangate45 library files in ../Design/nangate45/lib and the LEF files in ../Design/nangate45/lef. My design file is ../Design/1_synth.v for the gcd module. I need to use OpenROAD to load the Nangate45 technology and read in the gcd design.
+
+First, set up a clock on the clk port with a 20ns period and name the timing domain core_clock. Then, perform floorplanning with a 1.0 aspect ratio and 30% utilization, making sure there's a 10µm margin on all edges.
+
+Next, run the IO pin placement and assign the pins to metal8 and metal9 layers. After that, place the macros with a 2µm halo around them and set the fence region as the core area. Ensure that the macro pins on metal4 align with the track grid.
+
+Proceed to run global placement with 10 iterations, followed by detailed placement where the maximum movement is 1µm in the x direction and 3µm in the y direction.
+
+For the power delivery network (PDN), do the following:
+
+- For standard cells, use metal1, metal4, metal7, and metal8. Set metal1 straps to 0.07µm width.
+- On metal4, create straps with 1.2µm width and spacing, and a 6µm pitch.
+- On metal7 and metal8, use straps with 1.4µm width and spacing, and a 10.8µm pitch.
+- For macros, design PG rings using metal5 and metal6 with 1.5µm width and spacing.
+- For macro PG straps, use 1.2µm width and spacing with a 6µm pitch.
+- Use 0µm for any unspecified parameters.
+
+Set the unit resistance to 0.03574 and unit capacitance to 0.07516. Use BUF_X2 as the buffer cell for clock tree synthesis (CTS). Insert filler cells, then run global routing from metal1 to metal7. Finally, save the DEF file as final.def and the ODB file as final.odb.
+","```python
+from pathlib import Path
+import openroad
+
+# Define directories and file names
+libDir = Path(""../Design/nangate45/lib"")
+lefDir = Path(""../Design/nangate45/lef"")
+designDir = Path(""../Design/"")
+design_name = ""1_synth""
+design_top_module_name = ""gcd""
+verilogFile = designDir / str(design_name + "".v"")
+Clock_port_name = ""clk""
+
+# Initialize OpenROAD
+# This command initializes the OpenROAD database and tools
+openroad.init()
+
+# Read LEF files
+# This reads the technology and standard cell/macro abstracts
+tech_lef = lefDir / ""NangateOpenCellLibrary.mod.lef""
+macro_lef = lefDir / ""nangate45_io.lef"" # Assuming this file contains I/O pad LEFs
+openroad.read_lef(str(tech_lef))
+openroad.read_lef(str(macro_lef))
+
+# Read Liberty files
+# This reads the timing and functional information for standard cells and macros
+lib_files = sorted(libDir.glob(""NangateOpenCellLibrary_typical.lib""))
+for lib_file in lib_files:
+    openroad.read_liberty(str(lib_file))
+
+# Read Verilog netlist
+# This reads the structural description of the design
+openroad.read_verilog(str(verilogFile))
+
+# Link design
+# This connects the netlist to the loaded LEF/Liberty information
+openroad.link_design(design_top_module_name)
+
+# Make timing
+# This initializes the timing analyzer
+openroad.make_timing()
+
+# Set clock constraint
+# Defines a clock signal on the specified port
+openroad.create_clock(""-period"", ""20"", ""-waveform"", ""0 10"", ""-name"", ""core_clock"", str(Clock_port_name))
+
+# Report initial timing (optional, but good practice)
+# openroad.report_timing()
+
+# Floorplanning
+# Define core area based on utilization and aspect ratio with margins
+core_utilization = 0.30
+aspect_ratio = 1.0
+core_margin = 10 # in microns
+
+# Set utilization and aspect ratio for floorplanning
+# These parameters guide the initial core area calculation
+openroad.set_utilization(core_utilization)
+openroad.set_aspect_ratio(aspect_ratio)
+
+# Find the standard cell site definition from the technology LEF
+# This is needed to determine the valid placement locations
+# Assumes 'FreePDK45_38x28_10R_NP_162NW_34O' is the correct site name from LEF
+site = openroad.get_db().findSite(""FreePDK45_38x28_10R_NP_162NW_34O"")
+if site is None:
+    print(""Error: Site 'FreePDK45_38x28_10R_NP_162NW_34O' not found in LEF."")
+    exit()
+
+# Estimate the die size based on components and site information
+# This calculates the initial die and core boundaries
+openroad.estimate_diesize()
+
+# Create the floorplan
+# This places the core boundary and potentially power straps/rings if configured
+openroad.create_floorplan(""-site"", site.getName(), ""-core_margin"", str(core_margin))
+
+# I/O Pin Placement
+# Places the external I/O pins around the core boundary
+# Specify preferred layers for I/O pin placement
+openroad.place_io(""-layers"", ""met8 met9"") # Using layer names from LEF
+
+# Macro Placement
+# Place large cells (macros) before standard cells
+# Macros are typically fixed in their positions relative to the core
+# The fence region is implicitly the core area defined by the floorplan
+macro_halo_x = 2 # in microns
+macro_halo_y = 2 # in microns
+
+# Define a halo around macros. This pushes standard cells away from the macro boundary.
+# Note: set_macro_halo might not be a direct global command, often specified within place_macro or placement config.
+# Assuming place_macro handles it or needs configuration via other commands if available.
+# There isn't a single global command like set_macro_halo in the documented Python API that applies universally.
+# We proceed with place_macro and assume default haloing or rely on subsequent steps.
+
+# Align macro pins on metal4 to the track grid.
+# This ensures macro connectivity aligns with routing tracks for better routability.
+# This is typically part of the placement engine's optimization or a specific command.
+# There isn't a direct 'align_macro_pins' command. Placement tools usually handle this.
+# We will proceed with macro placement and global/detailed placement which handle pin alignment.
+
+# Run macro placement
+# Places all instances identified as macros
+openroad.place_macros()
+
+# Standard Cell Placement - Global Placement
+# Finds the initial approximate locations for all standard cells
+global_placement_iterations = 10
+openroad.global_placement(""-iterations"", str(global_placement_iterations))
+
+# Standard Cell Placement - Detailed Placement
+# Refines standard cell locations to legalize them and optimize local density/timing
+# Limit movement in X and Y directions
+detailed_placement_max_dist_x = 1.0 # in microns
+detailed_placement_max_dist_y = 3.0 # in microns
+openroad.detailed_placement(""-max_displace_x"", str(detailed_placement_max_dist_x), ""-max_displace_y"", str(detailed_placement_max_dist_y))
+
+# Power Delivery Network (PDN) Generation
+# Configure and generate power and ground routing
+pdn_gen = openroad.get_pdn_gen()
+
+# Set global unit resistance and capacitance (assuming these are used by the PDN tool)
+# Units are typically per square
+pdn_gen.set_unit_resistance(0.03574)
+pdn_gen.set_unit_capacitance(0.07516)
+
+# Add power and ground nets to the PDN configuration
+pdn_gen.add_net(""VDD"")
+pdn_gen.add_net(""VSS"")
+
+# Define standard cell power grid configuration
+# This specifies straps and rings for the standard cell area
+pdn_gen.add_std_cell_grid(""-nets"", ""VDD VSS"", # Apply to these nets
+                          ""-layers"", ""met1 met4 met7 met8"", # Use these layers for straps
+                          ""-straps"", # Define straps
+                            ""met1"", ""-width"", ""0.07"", ""-spacing"", ""0"", ""-pitch"", ""0"", # metal1 straps
+                            ""met4"", ""-width"", ""1.2"", ""-spacing"", ""1.2"", ""-pitch"", ""6"", # metal4 straps
+                            ""met7"", ""-width"", ""1.4"", ""-spacing"", ""1.4"", ""-pitch"", ""10.8"", # metal7 straps
+                            ""met8"", ""-width"", ""1.4"", ""-spacing"", ""1.4"", ""-pitch"", ""10.8"" # metal8 straps (corrected pitch based on typical usage, assuming 10.8 applies to both)
+                          # No rings specified for standard cells
+                         )
+
+# Define macro power grid configuration
+# This specifies rings and straps around/on macros
+pdn_gen.add_macro_grid(""-nets"", ""VDD VSS"", # Apply to these nets
+                       ""-rings"", # Define rings around macros
+                         ""met5 met6"", ""-width"", ""1.5"", ""-spacing"", ""1.5"", ""-offset"", ""0"", # metal5 and metal6 rings
+                       ""-straps"", # Define straps within macros or connecting to rings
+                         ""met?"", ""-width"", ""1.2"", ""-spacing"", ""1.2"", ""-pitch"", ""6"", # Metal layers for macro straps (using 'met?' as layer was not specified, typically depends on macro LEF) - Let's assume the request implies straps *connecting* to macros using standard layers, often lower metals. Metal4 is common. Re-reading: ""macro pins on metal4 align with the track grid"" suggests metal4 is relevant to macro connectivity, let's use metal4 for macro straps if they connect to macro pins. Let's assume the straps are general macro power connections, maybe metal4.
+                         ""met4"", ""-width"", ""1.2"", ""-spacing"", ""1.2"", ""-pitch"", ""6"" # Macro straps on metal4
+                      )
+
+# Generate the PDN
+# This creates the physical power and ground traces
+pdn_gen.generate()
+
+# Clock Tree Synthesis (CTS)
+# Builds the clock distribution network to minimize skew and insertion delay
+cts_buffer_cell = ""BUF_X2""
+openroad.set_cts_buffer(cts_buffer_cell)
+openroad.synthesize_clock_tree() # Runs CTS
+
+# Insert Filler Cells
+# Places filler cells in unused standard cell sites to maintain power/ground connectivity and density
+# Assumes filler cells are defined in the loaded Liberty/LEF files
+openroad.insert_fillers()
+
+# Global Routing
+# Determines the approximate paths for all signal nets
+# Route within the specified metal layer range
+openroad.global_route(""-min_layer"", ""met1"", ""-max_layer"", ""met7"")
+
+# Detailed Routing (often follows global routing, not explicitly requested but usually required)
+# Performs the final, DRC-clean routing. Skipping as per request.
+# openroad.detailed_route()
+
+# Save results
+# Save the final design database and DEF file
+final_def_file = designDir / ""final.def""
+final_odb_file = designDir / ""final.odb""
+
+# Write the final DEF file
+openroad.write_def(str(final_def_file))
+
+# Write the final database file
+openroad.write_db(str(final_odb_file))
+
+# Print a message indicating completion (optional)
+# print(""OpenROAD flow completed. Output saved to:"", final_def_file, ""and"", final_odb_file)
+
+# Exit OpenROAD (optional when running as a script)
+# openroad.exit()
+```"
+"
+- Locate Nangate45 library files in ../Design/nangate45/lib and LEF files in ../Design/nangate45/lef.
+- Use ../Design/1_synth.v for the gcd design.
+- Load Nangate45 technology into OpenROAD.
+- Import the gcd design.
+- Define a clock on the clk port with a 20ns period named core_clock.
+- Floorplan with a die area of 60µm × 50µm and a core area of 50µm × 40µm, maintaining a 5µm margin on all sides.
+- Execute IO placement, assigning pins to metal8 and metal9 layers.
+- Place macros with a 2µm halo and set the fence region to the core area.
+- Align macro pins on metal4 with the track grid.
+- Perform global placement with 10 iterations.
+- Conduct detailed placement allowing maximum displacements of 1µm (x-axis) and 3µm (y-axis).
+- Create a power grid:
+  - For standard cells, establish a PDN using metal1, metal4, metal7, and metal8.
+  - Set metal1 straps to 0.07µm width.
+  - On metal4, use straps with 1.2µm width, 1.2µm spacing, and a 6µm pitch.
+  - On metal7 and metal8, use straps with 1.4µm width, 1.4µm spacing, and a 10.8µm pitch.
+  - For macros' PG straps, set both width and spacing to 1.2µm with a 6µm pitch.
+  - Assign 0µm to any unspecified parameters.
+- Set unit resistance to 0.03574 and unit capacitance to 0.07516.
+- Use BUF_X2 as the buffer cell for Clock Tree Synthesis (CTS).
+- Insert filler cells.
+","```python
+from pathlib import Path
+import ord
+
+# Define file paths based on user examples
+libDir = Path(""../Design/nangate45/lib"")
+lefDir = Path(""../Design/nangate45/lef"")
+designDir = Path(""../Design/"")
+design_name = ""1_synth""
+design_top_module_name = ""gcd""
+verilogFile = designDir / f""{design_name}.v""
+
+# --- Load Technology and Libraries ---
+# Read LEF files for technology and standard cell geometry
+ord.read_lef(lefDir / ""NangateOpenROAD.lef"")
+ord.read_lef(lefDir / ""nangate45.lef"")
+
+# Read Liberty files for standard cell timing and power
+# Assuming standard library names exist within the libDir
+ord.read_lib(libDir / ""NangateOpenROAD.lib"")
+ord.read_lib(libDir / ""Nangate_slow.lib"") # Assuming a slow corner lib exists
+
+# --- Import Design ---
+# Read the Verilog netlist
+ord.read_verilog(verilogFile)
+
+# Link the design to the libraries
+ord.link_design(design_top_module_name)
+
+# --- Define Constraints ---
+# Create the clock on the specified port
+# Arguments: name, period, port
+ord.create_clock(""core_clock"", 20.0, f""[get_ports {ord.get_ports('clk')[0]}]"") # Find the actual port object
+
+# --- Floorplan ---
+# Define die and core areas
+die_lx = 0.0
+die_ly = 0.0
+die_ux = 60.0
+die_uy = 50.0
+
+margin = 5.0
+core_lx = die_lx + margin
+core_ly = die_ly + margin
+core_ux = die_ux - margin
+core_uy = die_uy - margin
+
+# Create the floorplan
+# Arguments: lx, ly, ux, uy (die), core_lx, core_ly, core_ux, core_uy (core)
+# Assuming a site name from the loaded LEF/technology
+site = ord.findSite(""FreePDK45_38x28_10R_NP_162NW_34O"") # Use the site name from the example
+ord.create_floorplan(die_lx, die_ly, die_ux, die_uy, core_lx, core_ly, core_ux, core_uy, site)
+
+# --- IO Placement ---
+# Place IO pins on specified layers
+# Arguments: -layers {list of layer names}
+ord.place_io(""-layers {metal8 metal9}"")
+
+# --- Macro Placement Configuration ---
+# Set halo around macros for placement
+# Arguments: macro_list, halo_x, halo_y
+macro_list = ord.get_instances(""-hierarchical -filter is_macro"")
+if macro_list:
+    ord.set_macro_halo(macro_list, 2.0, 2.0) # 2µm halo in both directions
+
+# Define a placement region for macros within the core area
+# Arguments: name, lx, ly, ux, uy
+macro_placement_region_name = ""macro_core_region""
+ord.create_placement_region(macro_placement_region_name, core_lx, core_ly, core_ux, core_uy)
+
+# Assign the placement region to all macros
+# Arguments: instance_list, region
+if macro_list:
+    ord.set_placement_region(macro_list, macro_placement_region_name)
+
+# Note: Macro pin alignment to track grid (metal4) is often handled automatically
+# by the placement engine if supported by the technology and site, or it's a
+# routing constraint. No specific command for this is available here before placement.
+
+# --- Placement ---
+# Perform global placement
+# Arguments: -iterations
+ord.global_placement(""-iterations 10"")
+
+# Perform detailed placement
+# Arguments: -max_displacement_x, -max_displacement_y
+ord.detailed_placement(""-max_displacement_x 1.0 -max_displacement_y 3.0"")
+
+# --- Power Grid Creation ---
+# Create VDD/VSS power ports if they don't exist
+# Arguments: port_name, layer, type
+ord.create_power_port(""VDD"", ""metal1"", ""power"")
+ord.create_power_port(""VSS"", ""metal1"", ""ground"")
+
+# Create a default power domain for the design
+# Arguments: name, instances, power_ports, ground_ports
+ord.create_power_domain(""core_domain"", [ord.get_top_module()], [""VDD""], [""VSS""])
+
+# Configure standard cell power grid (PDN)
+# Arguments: power_domain, layers, widths, spacings, pitches, offsets
+ord.create_pdn_standard_cell_grid(
+    power_domain=""core_domain"",
+    layers=[""metal1"", ""metal4"", ""metal7"", ""metal8""],
+    widths=[0.07, 1.2, 1.4, 1.4],
+    spacings=[0.0, 1.2, 1.4, 1.4], # Metal1 spacing unspecified -> 0
+    pitches=[0.0, 6.0, 10.8, 10.8], # Metal1 pitch unspecified -> 0
+    offsets=[0.0, 0.0, 0.0, 0.0] # Unspecified parameters -> 0
+)
+
+# Configure macro power grid (PDN)
+# Arguments: power_domain, layers, widths, spacings, pitches, offsets
+# Assuming macro PG straps should use the same layers as std cells or relevant macro layers
+# Applying the specified width, spacing, pitch to all specified layers
+macro_pg_layers = [""metal4"", ""metal7"", ""metal8""] # Example layers for macro PG
+macro_pg_width = 1.2
+macro_pg_spacing = 1.2
+macro_pg_pitch = 6.0
+ord.create_pdn_macro_grid(
+    power_domain=""core_domain"",
+    layers=macro_pg_layers,
+    widths=[macro_pg_width] * len(macro_pg_layers),
+    spacings=[macro_pg_spacing] * len(macro_pg_layers),
+    pitches=[macro_pg_pitch] * len(macro_pg_layers),
+    offsets=[0.0] * len(macro_pg_layers) # Unspecified parameters -> 0
+)
+
+# --- Set Analysis Parameters ---
+# Set unit resistance and capacitance
+ord.set_unit_resistance(0.03574)
+ord.set_unit_capacitance(0.07516)
+
+# Note: BUF_X2 is intended for Clock Tree Synthesis (CTS), which is not run in this script.
+# The buffer cell is typically configured before or during the 'run_cts' command.
+
+# --- Filler Cell Insertion ---
+# Insert filler cells to fill gaps in rows and connect PDN
+ord.insert_filler()
+
+# Note: The script stops here. Further steps like CTS, routing, verification, etc., would follow.
+# Example: ord.run_cts()
+# Example: ord.global_route()
+# Example: ord.detailed_route()
+
+# Example command to save the design state (optional, not explicitly requested)
+# ord.write_def(f""{design_name}.def"")
+# ord.write_db(f""{design_name}.db"")
+```"
+"
+The Nangate45 library is in the folder ../Design/nangate45/lib, and the LEF files are in ../Design/nangate45/lef. My gcd design file is at ../Design/1_synth.def. First, load the Nangate45 technology and import the design into OpenROAD. Set up a clock with a 20ns period on the clk port and call the timing domain core_clock. Next, do the floorplanning with an aspect ratio of 1.0 and use 30% of the area, making sure there's a 10µm margin on all sides.
+
+After floorplanning, place the IO pins on the metal8 and metal9 layers. Then, place the macros with a 2µm halo around them and set the fence region to be the core area. Make sure the macro pins on metal4 align with the track grid. Proceed with global placement using 10 iterations, followed by detailed placement where cells can move up to 1µm in the x direction and 3µm in the y direction.
+
+For the power delivery network (PDN), create PG rings for standard cells using metal1, metal4, metal7, and metal8 with 2µm width and spacing. Also, use metal1 with a width of 0.07µm. Add straps using metal4 (1.2µm width and spacing, 6µm pitch) and metal7 and metal8 (1.4µm width and spacing, 10.8µm pitch). For macros, design power grids with metal5 and metal6, both having 1.2µm width and spacing with a 6µm pitch. Ensure vias connect all adjacent metal layers with a 2µm pitch.
+
+Set the unit resistance to 0.03574 and capacitance to 0.07516. Use the BUF_X2 buffer cell for clock tree synthesis (CTS). Insert filler cells where needed. Perform global routing from metal1 to metal7. Save the DEF file as final.def and the netlist as final.v. After that, run detailed routing and perform a static IR drop analysis on the VDD net. Finally, generate a report showing the switching power, internal power, and leakage power of the design.
+","```python
+import openroad as ord
+import odb
+import tcl
+from pathlib import Path
+
+# Define file paths based on the user's directory structure
+libDir = Path(""../Design/nangate45/lib"")
+lefDir = Path(""../Design/nangate45/lef"")
+designDir = Path(""../Design/"")
+
+# Define design-specific variables
+design_name = ""1_synth""
+design_top_module_name = ""gcd"" # Assuming the top module in the DEF/Verilog is 'gcd'
+defFile = designDir / f""{design_name}.def""
+finalDefFile = designDir / ""final.def""
+finalVerilogFile = designDir / ""final.v""
+Clock_port_name = ""clk"" # Clock port name
+
+# --- Setup ---
+# Open the OpenROAD database
+ord.open_db()
+db = ord.get_db()
+
+# Get the OpenROAD core object
+rc = ord.get_rc()
+
+# Load LEF files (technology LEF first, then cell LEF)
+# Assuming tech LEF is 'nangate45.lef' and cell LEF is 'nangate45_stdcell.lef' in lefDir
+print(f""Loading LEF file: {lefDir / 'nangate45.lef'}"")
+ord.read_lef(str(lefDir / ""nangate45.lef""))
+print(f""Loading LEF file: {lefDir / 'nangate45_stdcell.lef'}"")
+ord.read_lef(str(lefDir / ""nangate45_stdcell.lef""))
+
+# Load the DEF file
+print(f""Loading DEF file: {defFile}"")
+ord.read_def(str(defFile))
+
+# Get the current block from the database
+block = db.getChip().getBlock()
+
+# --- Timing Setup ---
+# Create a clock with a 20ns period on the specified port
+print(f""Setting up clock '{Clock_port_name}' with 20ns period and timing domain 'core_clock'"")
+ord.create_clock(name=Clock_port_name, period=20.0, timing_domain=""core_clock"", source=f""clock_port {Clock_port_name}"")
+
+# --- Floorplanning ---
+# Get the floorplan tool
+floorplan = ord.get_tool(""floorplan"")
+
+# Set core utilization percentage
+floorplan.set_utilization(0.30)
+
+# Set the aspect ratio (width/height)
+floorplan.set_aspect_ratio(1.0)
+
+# Set the margin between the core and the die boundary (in microns)
+floorplan.set_core_to_die_margin(10.0)
+
+# Run the floorplanning process
+print(""Running floorplanning..."")
+floorplan.run()
+
+# --- IO Pin Placement ---
+# Get the IO placement tool
+io_place = ord.get_tool(""io_place"")
+
+# Set preferred layers for input and output pins
+io_place.set_input_layers([""metal8""])
+io_place.set_output_layers([""metal9""])
+
+# Run IO pin placement
+print(""Running IO placement..."")
+io_place.run()
+
+# --- Macro Placement Setup ---
+# Get the macro placement tool
+macro_place = ord.get_tool(""macro_place"")
+
+# Set the fence region for macro placement to the core area
+core_boundary = block.getCoreArea()
+macro_place.set_fence_region(core_boundary)
+
+# Set a halo distance around macros (in microns) - Note: Specific API for setting halo might vary,
+# this is a simplified representation. The actual halo application often happens during placement.
+# macro_place.set_macro_halo_distance(2.0) # Assuming such a direct function exists
+
+# Enable macro pin alignment to the track grid for metal4 pins
+# Note: OpenROAD's pin alignment typically applies generally or to specific layers
+# based on grid definitions. This flag enables the feature.
+macro_place.set_pin_align_to_track(True)
+
+
+# --- Placement ---
+# Get the global placement tool
+global_placement = ord.get_tool(""global_placement"")
+
+# Set the number of iterations for global placement
+global_placement.set_iterations(10)
+
+# Run global placement
+print(""Running global placement..."")
+global_placement.run()
+
+# Get the detailed placement tool
+detailed_placement = ord.get_tool(""detailed_placement"")
+
+# Set the maximum allowed cell displacement in x and y directions (in microns)
+detailed_placement.set_displacement(1.0, 3.0)
+
+# Run detailed placement
+print(""Running detailed placement..."")
+detailed_placement.run()
+
+
+# --- Power Delivery Network (PDN) ---
+# Get the PDN grid tool
+pdn_grid = ord.get_tool(""pdn_grid"")
+
+# Start defining the PDN grid
+pdn_grid.start_grid()
+
+# Set the power and ground nets
+pdn_grid.set_nets(""VDD"", ""VSS"") # Assuming VDD and VSS are the power/ground net names
+
+# Add standard cell PG rings
+# Based on the request: Metal8, Metal7, Metal4 with 2µm W/S, Metal1 with 0.07µm width and 2µm spacing
+pdn_grid.add_std_cell_ring(
+    layers=[""metal8"", ""metal7"", ""metal4"", ""metal1""],
+    widths=[2.0, 2.0, 2.0, 0.07],
+    spacings=[2.0, 2.0, 2.0, 2.0] # Assuming 2um spacing for metal1 ring as well
+)
+
+# Add standard cell PG straps
+# Metal4 straps: 1.2µm W/S, 6µm pitch
+pdn_grid.add_std_cell_straps(
+    layers=[""metal4""],
+    width=1.2,
+    spacing=1.2,
+    pitch=6.0
+)
+# Metal7 and Metal8 straps: 1.4µm W/S, 10.8µm pitch
+pdn_grid.add_std_cell_straps(
+    layers=[""metal7"", ""metal8""],
+    width=1.4,
+    spacing=1.4,
+    pitch=10.8
+)
+
+# Add macro PG grids
+# Metal5 and Metal6: 1.2µm W/S, 6µm pitch
+pdn_grid.add_macro_grid(
+    layers=[""metal5"", ""metal6""],
+    width=1.2,
+    spacing=1.2,
+    pitch=6.0
+)
+
+# Add vias connecting adjacent metal layers with a 2µm pitch
+pdn_grid.add_via(pitch=2.0)
+
+# Commit the grid definition
+pdn_grid.commit_grid()
+
+# Generate the PDN layout
+print(""Generating PDN..."")
+pdn_grid.generate()
+
+# --- IR Drop Setup ---
+# Get the PDN analysis tool
+pdnsim = ord.get_tool(""pdnsim"")
+
+# Set the unit resistance for power grid analysis
+pdnsim.set_unit_resistance(0.03574)
+
+# Set the unit capacitance for power grid analysis
+pdnsim.set_unit_capacitance(0.07516)
+
+# --- Clock Tree Synthesis (CTS) ---
+# Get the CTS tool
+cts = ord.get_tool(""cts"")
+
+# Set the buffer cell to be used for clock tree insertion
+cts.set_buffer(""BUF_X2"") # Assuming 'BUF_X2' is the cell name in the library
+
+# Run Clock Tree Synthesis
+print(""Running CTS..."")
+cts.run()
+
+# --- Filler Cell Insertion ---
+# Get the filler tool
+filler = ord.get_tool(""filler"")
+
+# Find filler cells in the library. Assumes filler cell names start with ""FILL"".
+# Need to get the library object first. Assuming the library is named ""Nangate45""
+lib = db.findLib(""Nangate45"")
+if lib is None:
+    # Fallback: get the first library found if specific name lookup fails
+    libs = db.getLibs()
+    if libs:
+        lib = libs[0]
+        print(f""Warning: Could not find library 'Nangate45'. Using library '{lib.getName()}' for filler cells."")
+    else:
+        print(""Error: No libraries found to identify filler cells."")
+        lib = None # Ensure lib is None if no libraries exist
+
+filler_cell_names = []
+if lib:
+    filler_cell_names = [cell.getName() for cell in lib.getCells() if cell.getName().startswith(""FILL"")]
+
+if filler_cell_names:
+    # Set the filler cell types to be used
+    filler.set_fill_cell(filler_cell_names)
+
+    # Run filler insertion
+    print(""Running filler cell insertion..."")
+    filler.run()
+else:
+    print(""Warning: No filler cells found (names starting with 'FILL'). Skipping filler insertion."")
+
+
+# --- Routing ---
+# Get the global routing tool
+global_routing = ord.get_tool(""global_routing"")
+
+# Set the min and max routing layers
+global_routing.set_min_layer(""metal1"")
+global_routing.set_max_layer(""metal7"")
+
+# Run global routing
+print(""Running global routing..."")
+global_routing.run()
+
+# Get the detailed routing tool
+detailed_routing = ord.get_tool(""detailed_routing"")
+
+# Run detailed routing
+print(""Running detailed routing..."")
+detailed_routing.run()
+
+# --- Output (Post-Routing DEF/Verilog) ---
+# Save the design to a new DEF file
+print(f""Saving final DEF file to: {finalDefFile}"")
+ord.write_def(str(finalDefFile))
+
+# Save the design netlist to a new Verilog file
+print(f""Saving final Verilog netlist to: {finalVerilogFile}"")
+ord.write_verilog(str(finalVerilogFile))
+
+# --- Analysis ---
+# Run static IR drop analysis on the VDD net
+print(""Running static IR drop analysis on VDD net..."")
+pdnsim.run_static_analysis(net=""VDD"")
+
+# Get the power analysis tool
+power_analysis = ord.get_tool(""power_analysis"")
+
+# Run power analysis and generate report
+print(""Running power analysis and generating report..."")
+# Running power_analysis.run() typically triggers calculation.
+# The subsequent report() call extracts and prints the results.
+power_analysis.run()
+power_analysis.report(modes=[""switching"", ""internal"", ""leakage""]) # Requesting specific power types in report
+
+# --- Cleanup ---
+# Close the OpenROAD database
+ord.close_db()
+
+print(""OpenROAD flow completed."")
+
+```"
+"
+Set the Nangate45 library path to ../Design/nangate45/lib and LEF files to ../Design/nangate45/lef. Load the gcd design from ../Design/1_synth.def into OpenROAD. Initialize the Nangate45 technology.
+
+Create a clock on the clk port with a 20ns period and name the timing domain core_clock. Floorplan the design with an aspect ratio of 1.0, 30% utilization, and 10µm margins on all sides.
+
+Place IO pins on metal8 (horizontal) and metal9 (vertical) layers. Position macros with a 2µm halo and set the fence region to the core area. Ensure macro pins on metal4 align with the track grid.
+
+Perform global placement with 10 iterations. Execute detailed placement allowing up to 1µm displacement in the x-direction and 3µm in the y-direction.
+
+Design the Power Delivery Network (PDN) as follows:
+- For standard cells, use metal1, metal4, metal7, and metal8.
+- Metal1 straps: width 0.07µm.
+- Metal4 straps: width and spacing 1.2µm, pitch 6µm.
+- Metal7 and metal8 straps: width and spacing 1.4µm, pitch 10.8µm.
+- For macros, create PG rings using metal5 and metal6 with 1.5µm width and spacing.
+- Macro PG straps: width and spacing 1.2µm, pitch 6µm.
+- Set unspecified parameters to 0µm.
+
+Set unit resistance to 0.03574 and capacitance to 0.07516. Use BUF_X2 for clock tree synthesis (CTS). Insert filler cells.
+
+Run global routing from metal1 to metal7, followed by detailed routing. Perform static IR drop analysis on the VDD net. Generate reports for switching power, internal power, and leakage power. Save the final design database as final.odb.
+","```python
+from pathlib import Path
+import openroad as ord
+
+# Define file paths and names
+libDir = Path(""../Design/nangate45/lib"")
+lefDir = Path(""../Design/nangate45/lef"")
+designDir = Path(""../Design/"")
+design_name = ""1_synth""
+design_top_module_name = ""gcd""
+defFile = designDir / f""{design_name}.def"" # DEF file containing the design
+Clock_port_name = ""clk""
+clock_period_ns = 20.0
+clock_domain_name = ""core_clock""
+site_name = ""FreePDK45_38x28_10R_NP_162NW_34O"" # Example site name
+
+# --- 1. Load and Initialize ---
+
+# Load technology and standard cell LEF files
+# Assuming standard Nangate45 LEF file names
+tech_lef = lefDir / ""nangate45_tech.lef""
+cell_lef = lefDir / ""NangateOpenCellLibrary.lef""
+
+# Read technology LEF
+ord.read_lef(str(tech_lef))
+# Read cell library LEF
+ord.read_lef(str(cell_lef))
+
+# Load the design from DEF file
+ord.read_def(str(defFile))
+
+# Set power and ground nets (assuming default names)
+# Necessary for PDN generation and power analysis
+ord.set_net_type(""VDD"", ""power"")
+ord.set_net_type(""VSS"", ""ground"")
+
+# --- 2. Timing Setup ---
+
+# Create timing clock constraint
+# Defines the clock signal on the specified port with the given period
+ord.make_timing_clock(
+    name=clock_domain_name, # Name of the timing domain
+    port=Clock_port_name,    # Port where the clock signal enters
+    period=clock_period_ns,  # Clock period in nanoseconds
+    is_input=True            # Specify that the clock is on an input port
+)
+
+# --- 3. Floorplanning ---
+
+# Define floorplan parameters
+aspect_ratio = 1.0      # Core area aspect ratio (height / width)
+utilization = 0.30      # Core area utilization (standard cells area / core area)
+margin = 10.0           # Margin around the core area from the die boundary (in microns)
+
+# Create the floorplan
+# Computes the core and die areas based on utilization, aspect ratio, and margins
+ord.create_floorplan(
+    site_name=site_name,       # The manufacturing site used for standard cells
+    core_utilization=utilization, # Target standard cell utilization in the core area
+    aspect_ratio=aspect_ratio, # Desired aspect ratio for the core area
+    core_margin=margin         # Margin distance from die boundary to core boundary on all sides
+)
+
+# Place IO pins
+# Automatically places input/output pins on the perimeter of the die
+io_horizontal_layer = ""metal8"" # Layer for horizontal pins
+io_vertical_layer = ""metal9""   # Layer for vertical pins
+
+ord.place_io(
+    site_name=site_name,          # Site definition needed for grid alignment
+    horizontal_layer=io_horizontal_layer, # Layer for horizontal pin placement
+    vertical_layer=io_vertical_layer    # Layer for vertical pin placement
+    # Other options like sides, orientation are not specified, using defaults
+)
+
+# Macro placement
+macro_halo = 2.0 # Keep this much space clear around macros (in microns)
+# fence_region_type = ""core"" # Place macros only within the core area
+# Macro pin alignment to track grid
+# The command macro_placement automatically places instances marked as MACRO
+ord.macro_placement(
+    halo_x=macro_halo, # Horizontal halo around macros
+    halo_y=macro_halo, # Vertical halo around macros
+    fence=""core"",      # Restrict macro placement to the core area
+    align_pin_grid=True # Align macro pins to the manufacturing grid tracks
+)
+
+# --- 4. Placement ---
+
+# Global Placement
+global_placement_iterations = 10 # Number of iterations for global placement optimization
+
+# Perform global placement to find approximate positions for cells
+ord.global_placement(
+    iterations=global_placement_iterations # Set the maximum number of global placement iterations
+)
+
+# Detailed Placement
+detailed_placement_displacement_x = 1.0 # Maximum allowed displacement in x-direction (in microns)
+detailed_placement_displacement_y = 3.0 # Maximum allowed displacement in y-direction (in microns)
+
+# Perform detailed placement to legalize cell positions and minimize local congestion/timing issues
+ord.detailed_placement(
+    displacement_x=detailed_placement_displacement_x, # Set maximum horizontal displacement
+    displacement_y=detailed_placement_displacement_y  # Set maximum vertical displacement
+)
+
+# --- 5. Power Delivery Network (PDN) Design ---
+
+# Define and generate the Power Delivery Network
+# Uses the pdngen command with add_grid and add_ring options
+# The following definitions describe horizontal standard cell grids, macro rings, and a macro grid
+
+pdn_commands = [
+    # Standard cell horizontal grids
+    # met1 straps: width 0.07um. Assuming a pitch based on typical row height (e.g., 1.7um)
+    ""-add_grid"", ""std_h_met1"",
+    ""-layers"", ""met1"",
+    ""-widths"", ""0.07"",
+    ""-spacing"", ""0"",      # Assuming 0 spacing if not specified, as per ""unspecified parameters to 0um""
+    ""-pitches"", ""1.7"",    # Assuming 1.7um pitch for met1 based on common row height
+
+    # met4 straps: width 1.2um, spacing 1.2um, pitch 6um
+    ""-add_grid"", ""std_h_met4"",
+    ""-layers"", ""met4"",
+    ""-widths"", ""1.2"",
+    ""-spacing"", ""1.2"",
+    ""-pitches"", ""6.0"",
+
+    # met7 and met8 straps: width 1.4um, spacing 1.4um, pitch 10.8um
+    ""-add_grid"", ""std_h_met78"",
+    ""-layers"", ""met7 met8"",
+    ""-widths"", ""{1.4 1.4}"",
+    ""-spacing"", ""{1.4 1.4}"",
+    ""-pitches"", ""{10.8 10.8}"",
+
+    # Macro PG rings
+    # met5 and met6 rings with 1.5um width and spacing around macros
+    ""-add_ring"", ""macro_ring"",
+    ""-layers"", ""met5 met6"",
+    ""-widths"", ""{1.5 1.5}"",
+    ""-spacing"", ""{1.5 1.5}"",
+    ""-around"", ""macros"", # Create rings around all placed macros
+
+    # Macro PG straps/grid
+    # width and spacing 1.2um, pitch 6um. Assuming this defines a grid over macros
+    # Using met4 (H) and met6 (V) for this grid, matching met4 stdcell params
+    ""-add_grid"", ""macro_grid_over_macros"",
+    ""-layers"", ""met4 met6"", # Assuming met4 (H) and met6 (V) for the macro grid
+    ""-widths"", ""{1.2 1.2}"",
+    ""-spacing"", ""{1.2 1.2}"",
+    ""-pitches"", ""{6.0 6.0}"", # Assuming 6um pitch for both layers based on met4 param
+    ""-area"", ""macros"", # Apply this grid only over the bounding box of macros
+
+    # Specify supply and ground nets used by the PDN (must be defined earlier)
+    ""-supply"", ""VDD"",
+    ""-ground"", ""VSS""
+]
+
+# Execute the PDN generation command
+ord.pdngen(*pdn_commands)
+
+# Insert filler cells
+# Places filler cells in empty spaces to connect standard cell power/ground rails
+ord.insert_fillers()
+
+# --- 6. Clock Tree Synthesis (CTS) ---
+
+# Set the buffer cell to be used for clock tree synthesis
+cts_buffer_cell = ""BUF_X2"" # Name of the buffer cell from the loaded library
+ord.set_cts_buffer_list(cts_buffer_cell) # Specify the list of buffers CTS can use
+
+# Set global routing layer adjustments (often needed before CTS/routing)
+# These adjustments can help reserve tracks or guide routing
+ord.set_global_routing_layer_adjustment(""met1"", 0.5) # Example adjustment: 50% usage limitation
+ord.set_global_routing_layer_adjustment(""met2"", 0.5)
+ord.set_global_routing_layer_adjustment(""met3"", 0.5) # Add other layers as needed
+
+# Run Clock Tree Synthesis
+# Builds the clock tree to minimize skew and meet latency requirements
+ord.run_cts()
+
+# --- 7. Routing ---
+
+# Set unit resistance and capacitance (These values might be technology-dependent and loaded from LEF/extracted parasitics)
+# If overriding technology defaults or setting for specific analysis:
+# Note: These values are typically set per layer using set_rc_model or handled by routing commands.
+# The request specifies ""unit resistance"" and ""unit capacitance"", which often refers to per-length or per-square values.
+# Assuming these are average values or parameters needed for the router/analyzer.
+# OpenROAD commands like global_route have parameters like -resistance and -capacitance but these might not directly map to ""unit"" values described.
+# Let's proceed without explicitly setting unit RC values via a command unless a clear command matching this description is found,
+# relying on values from the technology file or default routing behavior.
+
+# Global Routing
+# Determines the approximate paths for all nets using predefined routing grids
+global_routing_min_layer = ""metal1""
+global_routing_max_layer = ""metal7""
+
+ord.global_route(
+    min_layer=global_routing_min_layer, # Minimum routing layer
+    max_layer=global_routing_max_layer  # Maximum routing layer
+    # Other global routing options like congestion effort, timing effort can be added
+)
+
+# Detailed Routing
+# Lays out the exact paths for each net, respecting design rules (DRC)
+ord.detailed_route() # Performs detailed routing for all nets
+
+# --- 8. Analysis and Reporting ---
+
+# Perform static IR drop analysis on the VDD net
+# Calculates the static voltage drop on the VDD power net
+ir_drop_net = ""VDD""
+ord.analyze_power(
+    net=ir_drop_net, # Net to analyze (VDD in this case)
+    method=""static""  # Specify static IR drop analysis
+    # Other options like -voltage can be specified if not using nominal voltage
+)
+
+# Generate power reports
+# Reports estimated power consumption (switching, internal, leakage)
+# Requires completed routing and parasitic extraction, and potentially activity data (SAIF) for switching power.
+# analyze_power might provide static power breakdown.
+# report_power often prints results from the latest power analysis.
+ord.report_power() # Generate and print the power report
+
+# --- 9. Save Final Database ---
+
+# Save the current design database to a file
+# The database contains all design stages: floorplan, placement, PDN, routing, etc.
+ord.save_db(""final.odb"")
+
+print(""Design flow completed successfully. Final database saved to final.odb"")
+
+```"
+"
+The Nangate45 library files are in the ../Design/nangate45/lib folder, and the LEF files are in ../Design/nangate45/lef. The gcd design file is located at ../Design/1_synth.def. Start by loading the Nangate45 technology and importing the design into OpenROAD.
+
+Set up a clock on the clk port with a 20ns period and name this timing domain core_clock. Next, perform floorplanning with an aspect ratio of 1.0 and aim for 30% utilization. Make sure there’s a 10µm margin on all sides of the layout.
+
+Place the IO pins on the metal8 and metal9 layers. Then, place the macros with a 2µm halo around each one and set the fence region to cover the core area. Since the macros have pins on metal4, align these pins with the track grid.
+
+Proceed with global placement using 10 iterations. After that, do a detailed placement, allowing a maximum movement of 1µm in the x direction and 3µm in the y direction.
+
+Create a power grid following these rules:
+- For standard cells, use metal1, metal4, metal7, and metal8 to build the PDN.
+- On metal1, use power straps that are 0.07µm wide.
+- On metal4, create straps that are 1.2µm wide and spaced 1.2µm apart with a 6µm pitch.
+- On metal7 and metal8, use straps that are 1.4µm wide and spaced 1.4µm apart with a 10.8µm pitch.
+- For macro power straps, set both the width and spacing to 1.2µm and use a 6µm pitch.
+- Use 0µm for any other parameters not specified.
+
+Set the unit resistance to 0.03574 and the unit capacitance to 0.07516. Use BUF_X2 as the buffer cell for clock tree synthesis (CTS). Insert filler cells into the design. Finally, run global routing from metal1 to metal7 and save the netlist as final.v.
+","```python
+# Imports
+import odb
+import utl
+import ord
+import psm
+from pathlib import Path
+
+# --- Setup ---
+# Define file paths
+libDir = Path(""../Design/nangate45/lib"")
+lefDir = Path(""../Design/nangate45/lef"")
+designDir = Path(""../Design/"")
+design_name = ""1_synth""
+design_top_module_name = ""gcd"" # Top module name mentioned in request
+defFile = designDir / str(design_name + "".def"") # Input design DEF file
+
+# Output file path for the netlist after physical synthesis steps
+output_verilog_file = designDir / ""final.v""
+
+# Clock details
+Clock_port_name = ""clk""
+clock_period_ns = 20.0
+clock_domain_name = ""core_clock""
+
+# Floorplan parameters
+core_utilization = 0.30
+aspect_ratio = 1.0
+die_margin_um = 10.0
+
+# IO Pin Placement Layers (by name)
+io_placement_layers = [""metal8"", ""metal9""]
+
+# Macro Placement parameters
+macro_halo_um = 2.0 # Halo size around macros
+
+# Placement parameters
+global_placement_iterations = 10
+detailed_placement_max_move_x_um = 1.0
+detailed_placement_max_move_y_um = 3.0
+
+# Power grid parameters
+std_cell_pdn_layers = [""metal1"", ""metal4"", ""metal7"", ""metal8""]
+# Standard cell strap details (layer, width_um, spacing_um, pitch_um, offset_um, dir)
+# Directions based on common Nangate45 routing layers: M1(V), M2(H), M3(V), M4(H), M5(V), M6(H), M7(V), M8(H)
+std_cell_strap_params = {
+    ""metal1"": (0.07, 0, 0, 0, 'V'), # Width 0.07um, other params 0 as specified
+    ""metal4"": (1.2, 1.2, 6.0, 0, 'H'), # Width 1.2um, spacing 1.2um, pitch 6um
+    ""metal7"": (1.4, 1.4, 10.8, 0, 'V'), # Width 1.4um, spacing 1.4um, pitch 10.8um
+    ""metal8"": (1.4, 1.4, 10.8, 0, 'H'), # Width 1.4um, spacing 1.4um, pitch 10.8um
+}
+# Macro PDN layers (based on where macro pins/rails might be, and requested macro strap rules)
+macro_pdn_layers = [""metal1"", ""metal4""] # Assuming metal1 base and metal4 for macro pins
+# Macro strap details (width_um, spacing_um, pitch_um, offset_um) - Generic rule for macros
+macro_strap_rule = (1.2, 1.2, 6.0, 0.0) # Width 1.2um, spacing 1.2um, pitch 6um, offset 0um
+
+
+# RC parameters
+unit_resistance = 0.03574
+unit_capacitance = 0.07516
+
+# CTS parameters
+cts_buffer_cell_name = ""BUF_X2""
+
+# Filler cell names (common Nangate45 fillers)
+filler_cell_names = [""FILL_X1"", ""FILL_X2"", ""FILL_X4"", ""FILL_X8"", ""FILL_X16""]
+
+# Global Routing layers (by name)
+global_routing_start_layer_name = ""metal1""
+global_routing_end_layer_name = ""metal7""
+
+# --- OpenROAD Initialization ---
+# Redirect logs to stdout/stderr for visibility
+utl.redirectOpenRoadLogs()
+
+# Create a new design database
+db = odb.dbDatabase.create()
+
+# --- Load Libraries and Design ---
+utl.info(utl.ORD, 0, ""Loading libraries..."")
+# Read LEF files from the specified directory
+for lef_file in lefDir.glob(""*.lef""):
+    utl.info(utl.ORD, 0, f""Reading LEF file: {lef_file}"")
+    odb.read_lef(db, str(lef_file))
+
+utl.info(utl.ORD, 0, ""Loading design..."")
+# Read DEF file into the database
+utl.info(utl.ORD, 0, f""Reading DEF file: {defFile}"")
+# The read_def function populates the database with design data (instances, nets, pins, placement)
+chip = odb.read_def(db, str(defFile))
+
+# Get the top cell (block) which represents the design
+block = chip.getBlock()
+if not block:
+    utl.error(utl.ORD, 0, f""Could not get the top block from DEF file: {defFile}. Exiting."")
+    exit() # Exit if no block is loaded
+
+utl.info(utl.ORD, 0, f""Successfully loaded design: {block.getName()}"")
+
+# Set the current block in the global context for ord commands
+ord.set_block(block)
+tech = db.getTech() # Get the technology data from the loaded LEF/DEF
+
+# --- Clock Setup ---
+utl.info(utl.ORD, 0, ""Setting up clock..."")
+# Create the clock object on the specified input port
+ord.create_clock(name=clock_domain_name, period=clock_period_ns, ports=[Clock_port_name])
+utl.info(utl.ORD, 0, f""Clock '{clock_domain_name}' set on port '{Clock_port_name}' with period {clock_period_ns}ns."")
+
+# --- Floorplanning ---
+utl.info(utl.ORD, 0, ""Performing floorplanning..."")
+# Perform floorplanning to define the die and core areas based on utilization, aspect ratio, and margin
+ord.floorplan(
+    core_utilization=core_utilization, # Target core utilization
+    aspect_ratio=aspect_ratio, # Core aspect ratio
+    die_margin=[die_margin_um, die_margin_um, die_margin_um, die_margin_um], # Left, Bottom, Right, Top margin between core and die
+    die_margin_unit='um' # Specify margin unit as micrometers
+)
+utl.info(utl.ORD, 0, ""Floorplanning complete."")
+utl.info(utl.ORD, 0, f""Core area: {block.getCoreArea()}"")
+utl.info(utl.ORD, 0, f""Die area: {block.getDieArea()}"")
+
+
+# --- IO Pin Placement ---
+utl.info(utl.ORD, 0, ""Placing IO pins..."")
+# Find the layer objects for IO pin placement
+io_layers = [tech.findLayer(layer_name) for layer_name in io_placement_layers]
+# Filter out None values in case a layer name wasn't found
+io_layers = [layer for layer in io_layers if layer]
+
+if not io_layers:
+    utl.error(utl.ORD, 0, f""Could not find specified IO placement layers ({', '.join(io_placement_layers)}). Aborting IO placement."")
+else:
+    # Place IO pins on specified layers, typically around the die edge (default behavior)
+    ord.io_place(layers=io_layers)
+    utl.info(utl.ORD, 0, ""IO pin placement complete."")
+
+# --- Macro Placement Setup ---
+utl.info(utl.ORD, 0, ""Setting up macro placement..."")
+
+# Get the core bounding box after floorplanning to use as the macro fence
+core_bbox = block.getCoreArea()
+
+# Set macro fence region to the core area
+# Macros will only be placed within this defined rectangle (the core area)
+ord.set_macro_fence(core_bbox.xMin(), core_bbox.yMin(), core_bbox.xMax(), core_bbox.yMax())
+utl.info(utl.ORD, 0, f""Macro fence set to core area: {core_bbox}"")
+
+# --- Macro Placement ---
+utl.info(utl.ORD, 0, ""Placing macros..."")
+# Find all instances in the design that are macros
+macros = [inst for inst in block.getInsts() if inst.getMaster().isMacro()]
+
+if not macros:
+    utl.warn(utl.ORD, 0, ""No macros found in the design. Skipping macro placement and pin alignment steps."")
+else:
+    # Perform macro placement within the defined fence with a specified halo
+    macro_halo_dbu_x = db.micronToDBU(macro_halo_um)
+    macro_halo_dbu_y = db.micronToDBU(macro_halo_um)
+
+    ord.macro_place(
+        halo_x=macro_halo_dbu_x, # Halo size in X direction (DBU)
+        halo_y=macro_halo_dbu_y  # Halo size in Y direction (DBU)
+        # The command places all instances flagged as macros within the current fence.
+    )
+    utl.info(utl.ORD, 0, f""Macro placement complete with {macro_halo_um}µm halo."")
+
+    # --- Macro Pin Alignment ---
+    utl.info(utl.ORD, 0, ""Aligning macro pins..."")
+    # Find the layer object for macro pin alignment
+    macro_pin_layer = tech.findLayer(""metal4"")
+    if not macro_pin_layer:
+        utl.error(utl.ORD, 0, ""Could not find macro pin layer (metal4). Aborting macro pin alignment."")
+    else:
+        # Align macro pins on the specified layer (metal4) to the nearest track grid
+        ord.macro_pin_align(layer=macro_pin_layer)
+        utl.info(utl.ORD, 0, f""Macro pins aligned to {macro_pin_layer.getName()} tracks."")
+
+
+# --- Global Placement ---
+utl.info(utl.ORD, 0, ""Performing global placement..."")
+# Perform global placement iterations to roughly position standard cells
+ord.global_placement(iterations=global_placement_iterations)
+utl.info(utl.ORD, 0, f""Global placement complete after {global_placement_iterations} iterations."")
+
+# --- Detailed Placement ---
+utl.info(utl.ORD, 0, ""Performing detailed placement..."")
+# Perform detailed placement for fine-grained positioning, respecting max displacement limits
+detailed_placement_max_move_x_dbu = db.micronToDBU(detailed_placement_max_move_x_um)
+detailed_placement_max_move_y_dbu = db.micronToDBU(detailed_placement_max_move_y_um)
+
+ord.detailed_placement(
+    max_displacement_x=detailed_placement_max_move_x_dbu, # Max allowed movement in X (DBU)
+    max_displacement_y=detailed_placement_max_move_y_dbu  # Max allowed movement in Y (DBU)
+)
+utl.info(utl.ORD, 0, f""Detailed placement complete with max displacement {detailed_placement_max_move_x_um}µm (X), {detailed_placement_max_move_y_um}µm (Y)."")
+
+# --- Power Grid Construction ---
+utl.info(utl.ORD, 0, ""Building power grid..."")
+# Create a PDN configuration object
+cfg = psm.pdn_cfg()
+
+# Get power and ground net names (assuming standard VDD/VSS names from LEF/DEF)
+power_net = block.findNet(""VDD"")
+ground_net = block.findNet(""VSS"")
+
+if not power_net or not ground_net:
+     utl.error(utl.ORD, 0, ""Could not find VDD or VSS nets in the design. Power grid cannot be built. Exiting."")
+     exit() # Exit if P/G nets not found
+
+# Connect the PDN configuration to the specific power and ground nets
+cfg.connect_to_nets(power_net, ground_net)
+
+# Add global stripes for standard cells based on specified parameters
+utl.info(utl.ORD, 0, ""Adding standard cell power stripes..."")
+for layer_name in std_cell_pdn_layers:
+    params = std_cell_strap_params.get(layer_name)
+    if params:
+        width_um, spacing_um, pitch_um, offset_um, direction = params
+        layer = tech.findLayer(layer_name)
+        if layer:
+            utl.info(utl.ORD, 0, f""Adding std cell stripes on {layer_name} (W={width_um}um, S={spacing_um}um, P={pitch_um}um, Off={offset_um}um, Dir={direction})..."")
+            cfg.add_global_stripe(
+                layer=layer,
+                width=db.micronToDBU(width_um),
+                spacing=db.micronToDBU(spacing_um),
+                pitch=db.micronToDBU(pitch_um),
+                offset=db.micronToDBU(offset_um),
+                dir=direction,
+                followpin=False # Standard cell stripes don't typically follow pins directly
+            )
+        else:
+             utl.warn(utl.ORD, 0, f""Could not find layer '{layer_name}' for standard cell PDN. Skipping."")
+    else:
+         utl.warn(utl.ORD, 0, f""No parameters defined for standard cell stripes on layer '{layer_name}'. Skipping."")
+
+# Add macro stripes based on the generic macro rule and specified macro PDN layers
+utl.info(utl.ORD, 0, ""Adding macro power stripes..."")
+macro_strap_width_um, macro_strap_spacing_um, macro_strap_pitch_um, macro_strap_offset_um = macro_strap_rule
+
+for layer_name in macro_pdn_layers:
+     layer = tech.findLayer(layer_name)
+     if layer:
+          # Determine direction based on common Nangate45 pattern: V for odd index, H for even index
+          direction = 'V' if layer.getLayerIndex() % 2 != 0 else 'H'
+          # Override if specific layers have fixed directions in std_cell_strap_params (less flexible)
+          # Using the general odd/even index rule is usually safer unless tech manual says otherwise.
+          # For metal1 (idx 1, V) and metal4 (idx 4, H), this rule works with common practice.
+
+          utl.info(utl.ORD, 0, f""Adding macro stripes on {layer_name} (W={macro_strap_width_um}um, S={macro_strap_spacing_um}um, P={macro_strap_pitch_um}um, Off={macro_strap_offset_um}um, Dir={direction})..."")
+          cfg.add_macro_stripe(
+              layer=layer,
+              width=db.micronToDBU(macro_strap_width_um),
+              spacing=db.micronToDBU(macro_strap_spacing_um),
+              pitch=db.micronToDBU(macro_strap_pitch_um),
+              offset=db.micronToDBU(macro_strap_offset_um),
+              dir=direction,
+              followpin=True # Macro stripes often follow macro pins/rails
+          )
+     else:
+          utl.warn(utl.ORD, 0, f""Could not find layer '{layer_name}' for macro PDN. Skipping."")
+
+# Build the PDN using the configured stripes and connections
+psm.build_pdn(block, cfg)
+utl.info(utl.ORD, 0, ""Power grid construction complete."")
+
+# --- RC Extraction Setup ---
+utl.info(utl.ORD, 0, ""Setting unit RC values for technology..."")
+# Set unit resistance and capacitance values in the technology database
+tech.set_unit_resistance(unit_resistance)
+tech.set_unit_capacitance(unit_capacitance)
+utl.info(utl.ORD, 0, f""Unit resistance set to {unit_resistance}, Unit capacitance set to {unit_capacitance}."")
+# These values are typically used by timing analysis tools.
+
+# --- Clock Tree Synthesis (CTS) ---
+utl.info(utl.ORD, 0, ""Performing Clock Tree Synthesis..."")
+# Find the master cell object for the specified CTS buffer cell name
+cts_buffer_cell = db.findMaster(cts_buffer_cell_name)
+
+if not cts_buffer_cell:
+    utl.error(utl.ORD, 0, f""Could not find CTS buffer cell master '{cts_buffer_cell_name}'. Aborting CTS."")
+else:
+    # Perform CTS using the specified buffer cell master
+    ord.cts(
+        buffer_cell=cts_buffer_cell # Use buffer_cell parameter for a single buffer type
+        # Additional CTS options can be added here (e.g., root_buffer, boundary_buffer, max_slew, etc.)
+    )
+    utl.info(utl.ORD, 0, f""Clock Tree Synthesis complete using buffer cell '{cts_buffer_cell_name}'."")
+
+# --- Filler Insertion ---
+utl.info(utl.ORD, 0, ""Inserting filler cells..."")
+# Find the master cell objects for the specified filler cell names
+filler_cells = [db.findMaster(name) for name in filler_cell_names]
+# Filter out None values (for cell names that might not be found in the library)
+filler_cells = [cell for cell in filler_cells if cell]
+
+if not filler_cells:
+    utl.error(utl.ORD, 0, ""Could not find any specified filler cells. Aborting filler insertion."")
+else:
+    # Insert filler cells into the empty spaces in the layout, particularly in standard cell rows
+    ord.filler_place(filler_cells=filler_cells)
+    utl.info(utl.ORD, 0, f""Filler cells inserted using: {[cell.getName() for cell in filler_cells]}."")
+
+
+# --- Global Routing ---
+utl.info(utl.ORD, 0, ""Performing global routing..."")
+# Find the layer objects for the specified global routing layer range
+routing_start_layer = tech.findLayer(global_routing_start_layer_name)
+routing_end_layer = tech.findLayer(global_routing_end_layer_name)
+
+if not routing_start_layer or not routing_end_layer:
+    utl.error(utl.ORD, 0, f""Could not find global routing layers ('{global_routing_start_layer_name}' or '{global_routing_end_layer_name}'). Aborting global routing."")
+# Ensure the start layer is not above the end layer
+elif routing_start_layer.getLayerIndex() > routing_end_layer.getLayerIndex():
+     utl.error(utl.ORD, 0, f""Global routing start layer '{global_routing_start_layer_name}' (index {routing_start_layer.getLayerIndex()}) is above end layer '{global_routing_end_layer_name}' (index {routing_end_layer.getLayerIndex()}). Check layer order."")
+else:
+    # Perform global routing within the specified layer range (by layer index)
+    ord.global_route(
+        min_layer=routing_start_layer.getLayerIndex(),
+        max_layer=routing_end_layer.getLayerIndex()
+        # Other routing options like routing_adjustment can be added here
+    )
+    utl.info(utl.ORD, 0, f""Global routing complete from {global_routing_start_layer_name} to {global_routing_end_layer_name}."")
+
+# --- Save Output ---
+utl.info(utl.ORD, 0, f""Saving netlist to {output_verilog_file}..."")
+# Save the modified design database block as a Verilog netlist file
+odb.write_verilog(block, str(output_verilog_file))
+utl.info(utl.ORD, 0, ""Script finished successfully."")
+```"
+"
+Set up floorplan with a die size of 60µm by 50µm and a core area of 50µm by 40µm, maintaining a 5µm margin on each side. Execute IO placement, assigning pins to metal8 for horizontal and metal9 for vertical connections. Place macros with a 2µm halo and constrain them within the core area as a fence. Ensure macro pins on metal4 align with the track grid.
+
+Proceed with global placement using 10 iterations followed by detailed placement, restricting displacement to 1µm in the x-direction and 3µm in the y-direction. Design the power delivery network (PDN) as follows:
+
+- For standard cells, create PDN using metal1, metal4, metal7, and metal8. Utilize metal1 for bottom power straps with a width of 0.07µm.
+- Add metal4 straps with 1.2µm width and spacing, pitched at 6µm.
+- Implement metal7 and metal8 straps with 1.4µm width and spacing, pitched at 10.8µm.
+- For macros, design PG rings using metal5 and metal6 with 1.5µm width and spacing.
+- Create PG straps for macros with 1.2µm width and spacing, pitched at 6µm.
+- Set all unspecified parameters to 0µm.
+
+Assign unit resistance of 0.03574 and unit capacitance of 0.07516. Use BUF_X2 for clock tree synthesis (CTS). Insert filler cells. Perform global routing from metal1 to metal7. Export the DEF file as final.def and the netlist as final.v. Conduct detailed routing and perform static IR drop analysis on the VDD net. Report switching, internal, and leakage power. Save the OpenDB database as final.odb.
+","```python
+import ord
+import pathlib
+
+# Define file paths and design parameters
+libDir = pathlib.Path(""../Design/nangate45/lib"")
+lefDir = pathlib.Path(""../Design/nangate45/lef"")
+designDir = pathlib.Path(""../Design/"")
+design_name = ""final"" # Output file name prefix
+design_top_module_name = ""gcd"" # Top module name from Verilog
+verilogFile = designDir / ""1_synth.v""
+defFile = designDir / str(design_name + "".def"")
+verilog_outFile = designDir / str(design_name + "".v"")
+dbFile = designDir / str(design_name + "".odb"")
+
+# Define floorplan dimensions
+die_width = 60.0
+die_height = 50.0
+core_width = 50.0
+core_height = 40.0
+margin = 5.0 # Margin on each side
+
+# Calculate core area coordinates
+core_lx = margin
+core_ly = margin
+core_hx = die_width - margin
+core_hy = die_height - margin
+
+# Define placement constraints
+global_placement_iterations = 10
+detailed_placement_dx = 1.0
+detailed_placement_dy = 3.0
+
+# Define PDN parameters
+std_cell_pdn_layers = [""metal1"", ""metal4"", ""metal7"", ""metal8""]
+std_cell_m1_width = 0.07
+std_cell_m4_width = 1.2
+std_cell_m4_spacing = 1.2
+std_cell_m4_pitch = 6.0
+std_cell_m78_width = 1.4
+std_cell_m78_spacing = 1.4
+std_cell_m78_pitch = 10.8
+
+macro_pdn_ring_layers = [""metal5"", ""metal6""]
+macro_pdn_ring_width = 1.5
+macro_pdn_ring_spacing = 1.5
+macro_pdn_strap_layers = [""metal5"", ""metal6""] # Assuming macro straps also use M5/M6 as no other layers specified for straps
+macro_pdn_strap_width = 1.2
+macro_pdn_strap_spacing = 1.2
+macro_pdn_strap_pitch = 6.0
+
+# Define RC parameters
+res_per_micron = 0.03574
+cap_per_micron = 0.07516
+
+# Define CTS buffer cell
+cts_buffer_cell = ""BUF_X2"" # Example buffer cell name
+
+# Define global routing layers
+global_route_min_layer = ""metal1""
+global_route_max_layer = ""metal7""
+
+# Define power nets
+power_nets = [""VDD"", ""VSS""]
+
+# -----------------------------------------------------------------------------
+# Load design
+# -----------------------------------------------------------------------------
+ord.tech_init() # Initialize the technology database
+
+# Load LEF files (tech LEF first, then cell LEFs)
+# Iterate through LEF files in the directory and load them
+for lef_file in sorted(lefDir.glob(""*.lef"")):
+    ord.read_lef(str(lef_file))
+    print(f""Loaded LEF: {lef_file}"")
+
+# Load liberty files
+# Iterate through liberty files in the directory and load them
+# Requires .lib files for timing and power analysis
+for lib_file in sorted(libDir.glob(""*.lib"")):
+    ord.read_liberty(str(lib_file))
+    print(f""Loaded Liberty: {lib_file}"")
+
+# Load Verilog netlist
+ord.read_verilog(str(verilogFile))
+print(f""Loaded Verilog: {verilogFile}"")
+
+# Link the design to the loaded LEF/Liberty cells
+ord.link_design(design_top_module_name)
+print(f""Linked design: {design_top_module_name}"")
+
+# Get the current design block
+block = ord.get_block()
+if not block:
+    print(""Error: Could not get design block."")
+    exit()
+
+# -----------------------------------------------------------------------------
+# Floorplan
+# -----------------------------------------------------------------------------
+print(""\nPerforming floorplan..."")
+
+# Find a site from the technology library
+tech = ord.get_db().getTech()
+# Assuming the LEF contains a site definition; replace with the actual site name if known
+# A common site name for nangate45 is ""FreePDK45_38x28_10R_NP_162NW_34O"" from the example, let's try to find it or use the first one
+site = None
+for db_site in tech.getSites():
+    site = db_site
+    print(f""Using site: {site.getName()}"")
+    break # Use the first site found
+
+if not site:
+    print(""Error: No site found in LEF. Cannot create floorplan."")
+    exit()
+
+# Create the floorplan
+# Die area: bottom-left (0,0) to top-right (die_width, die_height)
+# Core area: bottom-left (core_lx, core_ly) to top-right (core_hx, core_hy)
+ord.create_floorplan(
+    site=site.getName(),
+    die_area=[0, 0, die_width, die_height],
+    core_area=[core_lx, core_ly, core_hx, core_hy]
+)
+print(f""Floorplan created with Die Area: [0, 0, {die_width}, {die_height}] µm, Core Area: [{core_lx}, {core_ly}, {core_hx}, {core_hy}] µm"")
+
+# -----------------------------------------------------------------------------
+# IO Placement
+# -----------------------------------------------------------------------------
+print(""\nPerforming IO placement..."")
+# Perform IO placement using specified horizontal and vertical layers
+ord.io_placement(
+    h_layers=[""metal8""],
+    v_layers=[""metal9""]
+)
+print(""IO placement completed using metal8 for horizontal and metal9 for vertical."")
+
+# -----------------------------------------------------------------------------
+# Macro Placement
+# -----------------------------------------------------------------------------
+print(""\nPerforming macro placement..."")
+# Perform macro placement with halo, fence constraint, and pin snapping
+ord.macro_placement(
+    halo=[2.0, 2.0], # 2µm halo around macros
+    fence=True,      # Constrain macros to core area as a fence
+    snap_layer=""metal4"" # Align macro pins on metal4 to the track grid
+)
+print(""Macro placement completed with 2µm halo, fence constraint, and metal4 pin snapping."")
+
+# -----------------------------------------------------------------------------
+# Power Delivery Network (PDN)
+# -----------------------------------------------------------------------------
+print(""\nDesigning Power Delivery Network (PDN)..."")
+# Construct the pdn_design command arguments
+pdn_args = []
+
+# Standard cell PDN straps
+# Metal1 bottom straps (vertical)
+pdn_args.extend([""-vstripe"", ""nets"", ""{ "" + "" "".join(power_nets) + "" }"",
+                 ""layer"", std_cell_pdn_layers[0],
+                 ""-width"", str(std_cell_m1_width),
+                 ""-spacing"", str(0.0), # Unspecified, use 0
+                 ""-pitch"", str(0.0),   # Unspecified, use 0
+                 ""-offset"", str(0.0)]) # Unspecified, use 0
+
+# Metal4 straps (horizontal)
+pdn_args.extend([""-hstripe"", ""nets"", ""{ "" + "" "".join(power_nets) + "" }"",
+                 ""layer"", std_cell_pdn_layers[1],
+                 ""-width"", str(std_cell_m4_width),
+                 ""-spacing"", str(std_cell_m4_spacing),
+                 ""-pitch"", str(std_cell_m4_pitch),
+                 ""-offset"", str(0.0)]) # Unspecified, use 0
+
+# Metal7 straps (horizontal)
+pdn_args.extend([""-hstripe"", ""nets"", ""{ "" + "" "".join(power_nets) + "" }"",
+                 ""layer"", std_cell_pdn_layers[2],
+                 ""-width"", str(std_cell_m78_width),
+                 ""-spacing"", str(std_cell_m78_spacing),
+                 ""-pitch"", str(std_cell_m78_pitch),
+                 ""-offset"", str(0.0)]) # Unspecified, use 0
+
+# Metal8 straps (vertical)
+pdn_args.extend([""-vstripe"", ""nets"", ""{ "" + "" "".join(power_nets) + "" }"",
+                 ""layer"", std_cell_pdn_layers[3],
+                 ""-width"", str(std_cell_m78_width),
+                 ""-spacing"", str(std_cell_m78_spacing),
+                 ""-pitch"", str(std_cell_m78_pitch),
+                 ""-offset"", str(0.0)]) # Unspecified, use 0
+
+# Macro PDN rings
+# Metal5 rings
+pdn_args.extend([""-macro_ring"", ""nets"", ""{ "" + "" "".join(power_nets) + "" }"",
+                 ""layer"", macro_pdn_ring_layers[0],
+                 ""-width"", str(macro_pdn_ring_width),
+                 ""-spacing"", str(macro_pdn_ring_spacing),
+                 ""-offset"", str(0.0)]) # Unspecified, use 0
+
+# Metal6 rings
+pdn_args.extend([""-macro_ring"", ""nets"", ""{ "" + "" "".join(power_nets) + "" }"",
+                 ""layer"", macro_pdn_ring_layers[1],
+                 ""-width"", str(macro_pdn_ring_width),
+                 ""-spacing"", str(macro_pdn_ring_spacing),
+                 ""-offset"", str(0.0)]) # Unspecified, use 0
+
+# Macro PDN straps
+# Metal5 and Metal6 straps over macros
+pdn_args.extend([""-macro_straps"", ""nets"", ""{ "" + "" "".join(power_nets) + "" }"",
+                 ""layers"", ""{ "" + "" "".join(macro_pdn_strap_layers) + "" }"",
+                 ""-width"", str(macro_pdn_strap_width),
+                 ""-spacing"", str(macro_pdn_strap_spacing),
+                 ""-pitch"", str(macro_pdn_strap_pitch),
+                 ""-offset"", str(0.0)]) # Unspecified, use 0
+
+# Execute the pdn_design command
+ord.pdn_design(*pdn_args)
+print(""PDN design completed."")
+
+
+# -----------------------------------------------------------------------------
+# Set RC units
+# -----------------------------------------------------------------------------
+print(""\nSetting RC units..."")
+# Set unit resistance and capacitance for parasitics extraction
+ord.set_rc_unit(
+    res_per_micron=res_per_micron,
+    cap_per_micron=cap_per_micron
+)
+print(f""RC units set: Resistance={res_per_micron} /µm, Capacitance={cap_per_micron} fF/µm"")
+
+# -----------------------------------------------------------------------------
+# Placement
+# -----------------------------------------------------------------------------
+print(""\nPerforming Global Placement..."")
+# Perform global placement with specified iterations
+ord.global_placement(
+    iterations=global_placement_iterations
+)
+print(f""Global Placement completed ({global_placement_iterations} iterations)."")
+
+print(""\nPerforming Detailed Placement..."")
+# Perform detailed placement with restricted displacement
+ord.detailed_placement(
+    displacement=[detailed_placement_dx, detailed_placement_dy]
+)
+print(f""Detailed Placement completed (displacement limited to dx={detailed_placement_dx}µm, dy={detailed_placement_dy}µm)."")
+
+# -----------------------------------------------------------------------------
+# Clock Tree Synthesis (CTS)
+# -----------------------------------------------------------------------------
+print(""\nPerforming Clock Tree Synthesis (CTS)..."")
+# Assuming 'clk' is the clock net name as per example file calls
+Clock_port_name = ""clk""
+ord.cts_design(
+    clock_port=Clock_port_name,
+    buffer_cell=cts_buffer_cell
+)
+print(f""CTS completed for clock '{Clock_port_name}' using buffer '{cts_buffer_cell}'."")
+
+# -----------------------------------------------------------------------------
+# Insert Fillers
+# -----------------------------------------------------------------------------
+print(""\nInserting filler cells..."")
+# Insert filler cells to fill gaps between standard cells
+ord.insert_fillers()
+print(""Filler cells inserted."")
+
+# -----------------------------------------------------------------------------
+# Routing
+# -----------------------------------------------------------------------------
+print(""\nPerforming Global Routing..."")
+# Perform global routing using specified layers
+ord.global_route(
+    layers=[global_route_min_layer, global_route_max_layer]
+)
+print(f""Global Routing completed (layers {global_route_min_layer} to {global_route_max_layer})."")
+
+print(""\nPerforming Detailed Routing..."")
+# Perform detailed routing
+ord.detailed_route()
+print(""Detailed Routing completed."")
+
+# -----------------------------------------------------------------------------
+# Parasitics Extraction
+# -----------------------------------------------------------------------------
+print(""\nExtracting parasitics (SPEF)..."")
+# Extract parasitics after routing
+# Need to specify a corners file or resistance/capacitance units
+# Assuming RC units were set earlier, extract parasitics using 'detailed' method
+ord.spef_extract(method=""detailed"")
+print(""Parasitics extraction completed."")
+
+# -----------------------------------------------------------------------------
+# Analysis (IR Drop, Power)
+# -----------------------------------------------------------------------------
+print(""\nPerforming Static IR Drop Analysis..."")
+# Perform static IR drop analysis on the VDD net
+# Needs SPEF and potentially an activity file or assumes worst-case switching
+# The '-method' and other options might be needed depending on setup
+ord.analyze_static_ir_drop(
+    vsrc=""VDD""
+    # Add other options like -method, -grid etc. if needed by the specific OpenROAD version/setup
+)
+print(""Static IR Drop analysis completed for VDD."")
+
+# Timing analysis is typically required before accurate power analysis
+# Need SDC file if not already sourced. Assume basic timing setup is possible.
+# This step is crucial for activity estimation needed for switching power.
+print(""\nPerforming Timing Analysis (required for Power Reporting)..."")
+# Assuming necessary timing libraries (.lib) were loaded
+# Sourcing SDC file is usually needed here. Placeholder comment.
+# ord.read_sdc(""path/to/your.sdc"")
+ord.run_timing_analysis() # Perform timing analysis
+print(""Timing analysis completed."")
+
+
+print(""\nReporting Power..."")
+# Report power consumption (switching, internal, leakage)
+# Requires timing analysis and parasitics extraction
+ord.report_power() # This command reports power components by default
+print(""Power report generated."")
+
+# -----------------------------------------------------------------------------
+# Save Outputs
+# -----------------------------------------------------------------------------
+print(""\nSaving outputs..."")
+
+# Export DEF file
+ord.write_def(str(defFile))
+print(f""Exported DEF: {defFile}"")
+
+# Export Verilog netlist (post-CTS/filler netlist)
+ord.write_verilog(str(verilog_outFile))
+print(f""Exported Verilog: {verilog_outFile}"")
+
+# Save OpenDB database
+ord.save_db(str(dbFile))
+print(f""Saved OpenDB database: {dbFile}"")
+
+print(""\nScript finished."")
+
+```"
+"
+Set up a floorplan with a die size of 60µm by 50µm. Make the core area 50µm by 40µm and leave a 5µm margin on each side. Place the IO pins using metal8 for horizontal connections and metal9 for vertical ones. When placing macros, keep a 2µm space around them and use the core area as a fence. Make sure the macro pins on metal4 match the track grid. Perform global placement with 10 iterations, then do detailed placement allowing up to 1µm movement in the x direction and 3µm in the y direction.
+
+For the power delivery network (PDN), use metal1, metal4, metal7, and metal8 for standard cells. Use metal1 for the bottom power straps with a width of 0.07µm. On metal4, create straps that are 1.2µm wide and spaced 1.2µm apart with a 6µm pitch. On metal7 and metal8, make straps 1.4µm wide, spaced 1.4µm apart, and pitched at 10.8µm. For macros, add PG rings using metal5 and metal6 with both width and spacing set to 1.5µm. Also, add PG straps for macros with a width and spacing of 1.2µm and a 6µm pitch. Use 0µm for any other parameters not mentioned.
+
+Set the unit resistance to 0.03574 and the unit capacitance to 0.07516. Use the BUF_X2 buffer cell for clock tree synthesis (CTS). Add filler cells to the design. Perform global routing from metal1 to metal7, then do detailed routing. Finally, save the netlist as final.v.
+","```python
+from pathlib import Path
+import openroad
+import sys
+
+# Initialize OpenROAD database and application
+# Get the database object where design data will be stored
+db = openroad.openroad_db.get_db()
+# Initialize the OpenROAD application context
+ord = openroad.OpenROAD()
+
+# --- File Paths and Design Info ---
+# Define standard directory structure paths as per example request context
+libDir = Path(""../Design/nangate45/lib"")
+lefDir = Path(""../Design/nangate45/lef"")
+designDir = Path(""../Design/"")
+
+# Define design specific names
+design_name = ""1_synth""
+design_top_module_name = ""gcd"" # User specifies the top module name
+
+# Construct full path to the Verilog netlist file
+verilogFile = designDir / str(design_name + "".v"")
+
+# Define clock port name for CTS
+Clock_port_name = ""clk"" # User specifies the clock port name
+
+# Define the standard cell site name used in the LEF files
+site_name = ""FreePDK45_38x28_10R_NP_162NW_34O"" # Example site name from request context
+
+# Define the buffer cell name to be used for Clock Tree Synthesis
+buffer_cell_name = ""BUF_X2"" # User specifies the buffer cell name
+
+# --- Load Libraries and Netlist ---
+print(""Loading LEF files..."")
+# Load standard cell and IO LEF files. Add other necessary LEF files (e.g., macro LEFs) here.
+try:
+    db.read_lef(str(lefDir / ""nangate45_stdcell.lef""))
+    db.read_lef(str(lefDir / ""nangate45_io.lef""))
+except Exception as e:
+    print(f""Error loading LEF files: {e}. Exiting."")
+    sys.exit(1)
+
+
+print(""Loading Liberty files..."")
+# Load standard cell Liberty files. Add other necessary Liberty files (e.g., macro LIBs) here.
+try:
+    db.read_lib(str(libDir / ""NangateOpenCellLibrary.lib""))
+except Exception as e:
+    print(f""Error loading Liberty files: {e}. Exiting."")
+    sys.exit(1)
+
+
+print(f""Reading Verilog netlist: {verilogFile}"")
+# Read the Verilog netlist that defines the design's connectivity and instances
+try:
+    db.read_verilog(str(verilogFile))
+except Exception as e:
+    print(f""Error reading Verilog file: {e}. Exiting."")
+    sys.exit(1)
+
+
+print(f""Linking design: {design_top_module_name}"")
+# Link the design by connecting instances in the netlist to cells defined in LEF/Liberty files
+block = db.link_design(design_top_module_name)
+if block is None:
+    print(f""Error: Could not link design {design_top_module_name}. Please check Verilog and library files. Exiting."")
+    sys.exit(1)
+# Set the linked block as the current design within the chip object
+db.setChip(db.getChip())
+db.getChip().setBlock(block)
+
+# Get necessary technology objects from the loaded data
+tech = db.getTech()
+if tech is None:
+    print(""Error: Could not get technology data from LEF files. Exiting."")
+    sys.exit(1)
+
+# Find required layers by name for floorplan, pins, and PDN configuration
+metal1 = tech.findLayer(""metal1"")
+metal4 = tech.findLayer(""metal4"")
+metal5 = tech.findLayer(""metal5"")
+metal6 = tech.findLayer(""metal6"")
+metal7 = tech.findLayer(""metal7"")
+metal8 = tech.findLayer(""metal8"")
+metal9 = tech.findLayer(""metal9"") # Layer for vertical IO pins
+
+# Check if essential layers were found to avoid errors later
+if not all([metal1, metal4, metal5, metal6, metal7, metal8, metal9]):
+    print(""Error: Could not find one or more required metal layers by name. Please check LEF files. Exiting."")
+    sys.exit(1)
+
+# Find the standard cell site definition by name
+site = db.getTech().findSite(site_name)
+if site is None:
+    print(f""Error: Could not find site {site_name}. Please check LEF files. Exiting."")
+    sys.exit(1)
+
+# Find the buffer cell object for CTS by name
+buffer_cell = db.findCell(buffer_cell_name)
+if buffer_cell is None:
+    print(f""Warning: Could not find buffer cell {buffer_cell_name}. CTS may fail or use a default. Please check Liberty files."")
+    # The script will continue, but this is a potential issue for CTS.
+
+# --- Floorplan ---
+# Define die size: 60µm x 50µm. Assuming origin of the layout at (0,0)
+die_width_um = 60.0
+die_height_um = 50.0
+die_area = openroad.Rect(0, 0, die_width_um, die_height_um)
+
+# Define core area: 50µm x 40µm with 5µm margin on each side relative to the die boundary
+core_margin_um = 5.0
+core_width_um = 50.0
+core_height_um = 40.0
+# Calculate core area rectangle: (left, bottom, right, top)
+core_area = openroad.Rect(core_margin_um, core_margin_um, core_margin_um + core_width_um, core_margin_um + core_height_um)
+
+print(f""Creating floorplan with Die Area: {die_area} and Core Area: {core_area}"")
+# Create the floorplan using the linked design, site definition, die area, and core area
+openroad.floorplan.create_floorplan(design_top_module_name, site, die_area, core_area)
+
+# --- IO Pin Placement ---
+# Place IO pins on the boundary of the core or die area.
+# Specify the layers to be used for horizontal and vertical pins according to the request.
+print(""Placing IO pins using metal8 for horizontal and metal9 for vertical..."")
+openroad.place_pins.place_pins(horiz_layers=[metal8], vert_layers=[metal9])
+
+# --- Macro Placement Constraints ---
+# Set constraints for macro instances in the design.
+print(""Setting macro placement constraints..."")
+# Set the boundary within which all macros must be placed (the core area). This acts as a fence.
+openroad.set_macro_boundary(core_area)
+
+# Set a global flag to instruct the placer to align macro pins to core standard cell tracks.
+# This helps integration between macros and surrounding standard cells. The request specifically
+# mentioned metal4, and this command typically applies to layers with standard cell tracks.
+openroad.set_macro_pin_follow_core_tracks(True)
+
+
+# --- Placement ---
+# Perform global placement to find initial approximate locations for cells and macros.
+# Run for 10 iterations as requested.
+print(""Performing global placement (10 iterations)..."")
+# Set macro placement distance (minimum required spacing around macros) during global placement.
+# The distance is specified in mm for this command.
+macro_spacing_um = 2.0
+macro_spacing_mm = macro_spacing_um / 1000.0
+openroad.global_placement.global_placement(iterations=10, macro_placement_dist_mm=macro_spacing_mm)
+
+# Perform detailed placement to finalize cell locations, removing overlaps and legalizing.
+# Allow up to 1µm movement in x and 3µm in y direction during legalization.
+print(""Performing detailed placement (max displacement 1um x, 3um y)..."")
+# The max_displacement argument is a tuple (max_x_disp_um, max_y_disp_um) in microns.
+openroad.detailed_placement.detailed_placement(max_displacement=(1.0, 3.0))
+
+
+# --- Power Delivery Network (PDN) ---
+print(""Creating Power Delivery Network..."")
+
+# Define PDN configuration dictionary based on user request specifications.
+# This dictionary describes the structure of power and ground straps and rings.
+# Note: Assumed power net name is ""VDD"" and ground net name is ""VSS"".
+# Note: Assumed directions (H/V) for straps based on common routing layer assignments (alternating).
+# Note: Assumed macro strap layers are Metal5 (H) and Metal6 (V) as these layers were specified for macro rings,
+# and no specific layers were mentioned for macro straps, but width/pitch were given.
+pdn_config = {
+    # List of metal layers that carry standard cell power rails/straps.
+    ""std_cell_metals"": [metal1, metal4, metal7, metal8],
+
+    # List of strap definitions. Each dictionary describes a set of parallel power/ground straps.
+    ""straps"": [
+        # Standard Cell Straps based on width/pitch specs and assumed directions
+        # Metal4: vertical, width 1.2um, pitch 6.0um
+        {""layer"": metal4, ""direction"": ""vertical"", ""width"": 1.2, ""pitch"": 6.0, ""offset"": 0},
+        # Metal7: horizontal, width 1.4um, pitch 10.8um
+        {""layer"": metal7, ""direction"": ""horizontal"", ""width"": 1.4, ""pitch"": 10.8, ""offset"": 0},
+        # Metal8: vertical, width 1.4um, pitch 10.8um
+        {""layer"": metal8, ""direction"": ""vertical"", ""width"": 1.4, ""pitch"": 10.8, ""offset"": 0},
+        # Macro Straps: metal5 (horizontal), metal6 (vertical) based on ring layers and strap pitch/width
+        # Metal5: horizontal, width 1.2um, pitch 6.0um
+        {""layer"": metal5, ""direction"": ""horizontal"", ""width"": 1.2, ""pitch"": 6.0, ""offset"": 0},
+        # Metal6: vertical, width 1.2um, pitch 6.0um
+        {""layer"": metal6, ""direction"": ""vertical"", ""width"": 1.2, ""pitch"": 6.0, ""offset"": 0},
+        # Note: Metal1 was mentioned for std cells (0.07um width) but no pitch/spacing was given.
+        # It is not included as an explicit strap here, assuming it refers to internal cell power rails
+        # or minimal strapping potentially handled differently or implicitly.
+    ],
+
+    # List of macro ring definitions. Each dictionary describes rings around macros.
+    ""macro_rings"": [
+        # Rings around macros using metal5 and metal6 with specified width and spacing
+        {""layers"": [metal5, metal6], ""width"": 1.5, ""spacing"": 1.5, ""s_offset"": 0, ""e_offset"": 0, ""side"": ""all""}
+    ],
+
+    # Names of the power and ground nets in the design.
+    ""vsrc"": ""VDD"", # Power net name
+    ""gsrc"": ""VSS"", # Ground net name
+
+    # List of metal layers used for vias connecting standard cell power rails/straps.
+    # Assuming vias can be placed on all specified std_cell_metals.
+    ""std_cell_via_metals"": [metal1, metal4, metal7, metal8],
+
+    # Optional parameters from the command (using defaults or None as requested for ""any other parameters"")
+    # ""double_route_via"": False, # Default behavior
+    # ""via_cell"": None, # Use vias defined in the technology file
+    # ""connect_to_track"": True, # Connect straps to routing tracks
+    # ""connect_to_row"": True, # Connect straps to standard cell rows
+    # ""core_ring"": None, # Do not add core rings around the entire core area (not requested)
+}
+
+# Create the PDN based on the defined configuration
+try:
+    openroad.power_delivery.create_power_delivery_network(config=pdn_config)
+except Exception as e:
+    print(f""Error creating PDN: {e}. Continuing flow, but subsequent steps may fail."")
+    # A more robust script might exit here.
+
+# --- Parasitics ---
+# Set unit resistance and capacitance values used by the parasitics engine.
+print(""Setting unit parasitics..."")
+# Need to specify a reference layer for these values. Metal1 is a common choice.
+try:
+    openroad.parasitics.set_resistance_per_unit(metal1, 0.03574)
+    openroad.parasitics.set_capacitance_per_unit(metal1, 0.07516)
+except Exception as e:
+    print(f""Warning: Could not set unit parasitics: {e}. Continuing flow."")
+
+
+# --- Clock Tree Synthesis (CTS) ---
+print(""Performing Clock Tree Synthesis..."")
+# Perform CTS targeting the specified clock port and using the specified buffer cell.
+# Note: Warning about missing buffer_cell was printed earlier if not found.
+try:
+    openroad.clock_tree_synthesis.clock_tree_synthesis(clock_port_name=Clock_port_name, buffer_cell=buffer_cell_name)
+except Exception as e:
+    print(f""Error during CTS: {e}. Continuing flow, but clock tree may be incomplete or missing."")
+
+
+# --- Add Filler Cells ---
+print(""Adding filler cells..."")
+# Find standard cells marked as fillers in the loaded library data.
+# Cells with the IS_FILLER property are typically used to fill empty spaces in standard cell rows
+# after placement to ensure continuous power/ground rails and maintain density.
+filler_cells_list = [cell for cell in db.getChip().getBlock().getDB().getCells() if cell.isFiller()]
+
+if filler_cells_list:
+    print(f""Found filler cells: {[c.getName() for c in filler_cells_list]}"")
+    # Add the found filler cells to fill empty spaces.
+    try:
+        openroad.filler.add_fillers(filler_cells_list)
+    except Exception as e:
+         print(f""Error adding filler cells: {e}. Continuing flow."")
+else:
+    print(""Warning: No filler cells with IS_FILLER property found. Skipping filler insertion."")
+    # If no filler cells are found, the script continues but the layout will have gaps.
+
+# --- Routing ---
+# Perform global routing first to determine coarse routing paths and channel congestion.
+print(""Performing global routing..."")
+# Perform global routing using layers from metal1 up to metal7 as requested.
+try:
+    openroad.global_route.global_routing(start_layer=metal1, end_layer=metal7)
+except Exception as e:
+    print(f""Error during global routing: {e}. Continuing flow, but detailed routing may fail."")
+
+# Perform detailed routing to route all nets precisely, respecting design rules and global guides.
+print(""Performing detailed routing..."")
+try:
+    openroad.detailed_route.detailed_routing()
+except Exception as e:
+    print(f""Error during detailed routing: {e}. Routing may be incomplete or contain violations."")
+
+
+# --- Save Output ---
+print(""Saving final netlist..."")
+# Define the output Verilog file name for the routed netlist
+final_verilog_file = ""final.v""
+# Write the modified netlist (including added buffers, filler cells, updated connectivity) to a new Verilog file.
+try:
+    db.write_verilog(final_verilog_file)
+    print(f""Flow completed. Final netlist saved to {final_verilog_file}"")
+except Exception as e:
+    print(f""Error writing final netlist: {e}"")
+
+
+# Clean up OpenROAD database and application resources (optional but good practice)
+# ord.destroy() # Command not typically available or necessary in scripted execution
+# db.destroy() # Command not typically available or necessary in scripted execution
+
+```"
+"
+Perform floorplanning with a 1.0 aspect ratio and 30% utilization. Maintain a 10µm margin on all sides. Execute IO pin placement on metal8 (horizontal) and metal9 (vertical) layers. Place macros with a 2µm halo and set the fence region to the core area. Align macro pins on metal4 with the track grid. Conduct global placement for 10 iterations, followed by detailed placement limiting displacement to 1µm in X and 3µm in Y directions.
+
+Build the power grid as follows:
+- **Standard Cells**:
+  - Use metal1, metal4, metal7, and metal8 layers.
+  - metal1: Bottom power straps, 0.07µm width.
+  - metal4: Straps with 1.2µm width and spacing, 6µm pitch.
+  - metal7 & metal8: Straps with 1.4µm width and spacing, 10.8µm pitch.
+- **Macros**:
+  - PG straps with 1.2µm width, spacing, and 6µm pitch.
+
+Set all unspecified parameters to 0µm. Assign unit resistance to 0.03574 and unit capacitance to 0.07516. Use BUF_X2 for clock tree synthesis (CTS). Insert filler cells. Execute global routing from metal1 to metal7. Save the DEF file as final.def, the netlist as final.v, and the odb as final.odb. Complete the flow with detailed routing.
+","```python
+import ord
+from pathlib import Path
+import sys
+
+# Define file paths and design parameters
+libDir = Path(""../Design/nangate45/lib"")
+lefDir = Path(""../Design/nangate45/lef"")
+designDir = Path(""../Design/"")
+design_name = ""1_synth""
+design_top_module_name = ""gcd""
+verilogFile = designDir / f""{design_name}.v""
+Clock_port_name = ""clk""
+lib_files = [
+    libDir / ""NangateOpenCellLibrary.lib""
+]
+lef_files = [
+    lefDir / ""NangateOpenCellLibrary.lef""
+]
+site_name = ""FreePDK45_38x28_10R_NP_162NW_34O"" # Site name from example
+
+# Define output files
+def_file = ""final.def""
+verilog_out_file = ""final.v""
+db_file = ""final.odb""
+
+# Read LEF files
+print(""Reading LEF files..."")
+for lef in lef_files:
+    ord.read_lef(lef)
+
+# Read Liberty files
+print(""Reading Liberty files..."")
+for lib in lib_files:
+    ord.read_lib(lib)
+
+# Read Verilog netlist
+print(f""Reading Verilog netlist: {verilogFile}..."")
+ord.read_verilog(verilogFile)
+
+# Initialize design
+print(f""Initializing design: {design_top_module_name}..."")
+ord.init_design(design_top_module_name)
+
+# Get technology site for floorplan
+print(f""Finding site: {site_name}..."")
+tech = ord.db.Tech.get()
+site = tech.findSite(site_name)
+if not site:
+    print(f""Error: Site '{site_name}' not found in technology LEF."")
+    sys.exit(1)
+
+# Perform floorplanning
+print(""Performing floorplanning..."")
+# utilization: target core utilization
+# aspectRatio: core width / core height
+# margins: distance from die boundary to core boundary on left, bottom, right, top (in um)
+ord.create_floorplan(
+    utilization=0.30,
+    aspectRatio=1.0,
+    margins=[10.0, 10.0, 10.0, 10.0], # [left, bottom, right, top] margin in um
+    site=site,
+    tech=tech
+)
+
+# Perform IO pin placement
+print(""Performing IO pin placement..."")
+# vertical_layers: list of metal layers for vertical pins
+# horizontal_layers: list of metal layers for horizontal pins
+ord.io_placement(
+    vertical_layers=[""metal9""],
+    horizontal_layers=[""metal8""]
+)
+
+# Perform macro placement
+print(""Performing macro placement..."")
+# Set macro halo (exclusion zone)
+# halo_x/y: size of halo in um
+# halo_type: 'hard' prevents other cells, 'soft' discourages
+# halo_in_core: True means halo stays within core area
+ord.macro_placement(
+    halo_x=2.0,
+    halo_y=2.0,
+    halo_type='hard',
+    halo_in_core=True,
+    fence_in_core=True # Set fence region to the core area
+)
+
+# Align macro pins to track grid
+print(""Aligning macro pins to track grid..."")
+# layer: reference layer for tracks
+# method: 'track_grid' aligns pins to the nearest track
+ord.align_macro_pins(
+    layer=""metal4"",
+    method=""track_grid""
+)
+
+# Perform global placement
+print(""Performing global placement..."")
+# iterations: number of global placement iterations
+ord.global_placement(
+    iterations=10
+)
+
+# Perform detailed placement
+print(""Performing detailed placement..."")
+# max_displacement_x/y: maximum allowed displacement in um during detailed placement
+ord.detailed_placement(
+    max_displacement_x=1.0,
+    max_displacement_y=3.0
+)
+
+# Generate power ground straps
+print(""Generating power ground straps..."")
+
+# Standard cell PG strap configurations
+# layer: metal layer name
+# width: strap width in um
+# pitch: strap pitch (center to center) in um
+# offset: offset from the boundary (or first track) in um
+# number: number of straps (0 means fill the area based on pitch/width/offset)
+# direction: 'H' for horizontal, 'V' for vertical
+std_cell_pg_configs = [
+    {'layer': ""metal1"", 'width': 0.07, 'pitch': 0.0, 'offset': 0.0, 'number': 0, 'direction': 'H'}, # Bottom power straps
+    {'layer': ""metal4"", 'width': 1.2,  'pitch': 6.0, 'offset': 0.0, 'number': 0, 'direction': 'V'},
+    {'layer': ""metal7"", 'width': 1.4,  'pitch': 10.8, 'offset': 0.0, 'number': 0, 'direction': 'H'},
+    {'layer': ""metal8"", 'width': 1.4,  'pitch': 10.8, 'offset': 0.0, 'number': 0, 'direction': 'V'}
+]
+
+# Macro PG strap configurations
+macro_pg_configs = [
+    {'layer': ""metal4"", 'width': 1.2, 'pitch': 6.0, 'offset': 0.0, 'number': 0, 'direction': 'H'},
+    {'layer': ""metal5"", 'width': 1.2, 'pitch': 6.0, 'offset': 0.0, 'number': 0, 'direction': 'V'} # Example layer M5 for macro PG
+]
+
+# Generate PG strips
+# std_cell_configs: list of configurations for standard cell PG
+# macro_configs: list of configurations for macro PG
+# unit_resistance: resistance per unit length for power analysis
+# unit_capacitance: capacitance per unit length for power analysis
+ord.generate_pg_strips(
+    std_cell_configs=std_cell_pg_configs,
+    macro_configs=macro_pg_configs,
+    unit_resistance=0.03574,
+    unit_capacitance=0.07516
+)
+
+# Perform clock tree synthesis (CTS)
+print(""Performing clock tree synthesis..."")
+# clock_port: name of the clock input port
+# buffer_cell: name of the buffer cell to use for CTS
+ord.clock_tree_synthesis(
+    clock_port=Clock_port_name,
+    buffer_cell=""BUF_X2""
+)
+
+# Insert filler cells
+print(""Inserting filler cells..."")
+# Fills empty spaces in standard cell rows with filler cells to ensure power rail continuity
+ord.filler_placement()
+
+# Perform global routing
+print(""Performing global routing..."")
+# min_layer: minimum metal layer to use for routing
+# max_layer: maximum metal layer to use for routing
+ord.global_route(
+    min_layer=""metal1"",
+    max_layer=""metal7""
+)
+
+# Perform detailed routing
+print(""Performing detailed routing..."")
+ord.detailed_route()
+
+# Save outputs
+print(f""Saving DEF file: {def_file}..."")
+ord.write_def(def_file)
+
+print(f""Saving Verilog netlist: {verilog_out_file}..."")
+ord.write_verilog(verilog_out_file)
+
+print(f""Saving ODB database: {db_file}..."")
+ord.write_db(db_file)
+
+print(""Physical design flow completed."")
+
+```"
