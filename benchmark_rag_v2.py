@@ -16,17 +16,17 @@ COLLECTIONS = {
     "prompt_scripts": {
         "name": "rag_prompt_scripts",
         "description": "RAG dataset with code and prompt embeddings",
-        "top_k": 5
+        "top_k": 6
     },
     "api_docs": {
         "name": "rag_api_docs",
         "description": "RAG dataset with API documentation embeddings",
-        "top_k": 20
+        "top_k": 40
     },
     "code_pieces": {
         "name": "rag_code_pieces",
         "description": "RAG dataset with code piece embeddings",
-        "top_k": 5
+        "top_k": 6
     }
 }
 EMBEDDING_MODEL = "all-mpnet-base-v2"
@@ -45,9 +45,21 @@ SYSTEM_PROMPT = """You are a helpful assistant that generates Python scripts for
 * Assume the user has already set up the OpenROAD environment and has access to the required libraries, LEF files, and Verilog netlists.
 * Prioritize clarity and readability in the generated code.
 * Use descriptive variable names.
+* You must abide by file structure shown in the **Example File Calls** below (i.e., don't assume placeholder directories)
+
+**Example File Calls:**
+libDir = Path("../Design/nangate45/lib") 
+lefDir = Path("../Design/nangate45/lef") 
+designDir = Path("../Design/") 
+design_name = "1_synth" 
+design_top_module_name = "gcd" 
+verilogFile = designDir/str("1_synth.v") 
+verilog_file = designDir / "1_synth.v" 
+site = floorplan.findSite("FreePDK45_38x28_10R_NP_162NW_34O")  
+Clock_port_name = "clk" 
+
 
 **Output Format:**
-
 The output should be a complete Python script enclosed within ```python and ``` tags."""
 
 # Define state
@@ -212,7 +224,8 @@ def get_relevant_documents(query: str, query_type: str) -> Dict[str, List[Dict[s
 def main():
     # Load benchmark data
     print("Loading benchmark data...")
-    df = pd.read_csv("data/bench_data.csv")
+    #df = pd.read_csv("data/bench_data.csv")
+    df = pd.read_csv("data/new_RAG_data/bench_data_v2.csv", nrows=5)
     total_prompts = len(df)
     print(f"Found {total_prompts} prompts to process")
     
@@ -241,8 +254,8 @@ def main():
     # Save results
     print("\nSaving results...")
     results_df = pd.DataFrame(results)
-    results_df.to_csv("results/RAG_non-thinking-v2.csv", index=False)
-    print("Results saved to results/RAG_non-thinking-v2.csv")
+    results_df.to_csv("results/RAG_non-thinking-v3.csv", index=False)
+    print("Results saved to results/RAG_non-thinking-v3.csv")
 
 if __name__ == "__main__":
     main() 

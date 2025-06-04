@@ -1,4 +1,4 @@
-Code,Prompt
+code,prompt
 "from openroad import Tech, Design, Timing
 from pathlib import Path
 
