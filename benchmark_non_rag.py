@@ -73,7 +73,7 @@ def main():
     
     # Load benchmark data
     print("Loading benchmark data...")
-    df = pd.read_csv("data/new_RAG_data/bench_data_v2.csv", nrows=10)
+    df = pd.read_csv("data/new_RAG_data/bench_data_v2.csv", nrows=2)
     total_prompts = len(df)
     print(f"Found {total_prompts} prompts to process")
     
@@ -84,7 +84,7 @@ def main():
     results = []
     for _, row in tqdm(df.iterrows(), total=total_prompts, desc="Processing prompts"):
         initial_state = {
-            "prompt": row['prompt'],
+            "prompt": row['Prompt'],
             "response": ""
         }
         result = workflow.invoke(initial_state)
@@ -96,8 +96,8 @@ def main():
     # Save results
     print("\nSaving results...")
     results_df = pd.DataFrame(results)
-    results_df.to_csv("results/no_RAG_non-thinking_v2.csv", index=False)
-    print(f"Results saved to results/no_RAG_non-thinking_v2.csv")
+    results_df.to_csv("reproduced-results/Prompt-Only.csv", index=False)
+    print(f"Results saved to reproduced-results/Prompt-Only.csv")
 
 if __name__ == "__main__":
     main() 

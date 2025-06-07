@@ -469,7 +469,7 @@ def main():
     # Load benchmark data
     print("Loading benchmark data...")
     #df = pd.read_csv("data/bench_data.csv")
-    df = pd.read_csv("data/new_RAG_data/bench_data_v2.csv", nrows=10)
+    df = pd.read_csv("data/new_RAG_data/bench_data_v2.csv", nrows=2)
     
     # Initialize workflow
     workflow = create_workflow()
@@ -481,7 +481,7 @@ def main():
     all_results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
         # Submit all prompts to the executor
-        future_to_prompt = {executor.submit(process_prompt, row['prompt']): row['prompt'] for _, row in df.iterrows()}
+        future_to_prompt = {executor.submit(process_prompt, row['Prompt']): row['Prompt'] for _, row in df.iterrows()}
         
         # Process results as they complete with progress bar
         for future in tqdm(concurrent.futures.as_completed(future_to_prompt), 
@@ -496,8 +496,8 @@ def main():
     # Save all results
     print("\nSaving results...")
     results_df = pd.DataFrame(all_results)
-    results_df.to_csv("results/multi_agent_results_v4.csv", index=False)
-    print("Results saved to results/multi_agent_results_v4.csv")
+    results_df.to_csv("reproduced-results/Agent_Results.csv", index=False)
+    print("Results saved to reproduced-results/Agent_Results.csv")
     
     # Print summary
     print("\nSummary:")

@@ -225,7 +225,7 @@ def main():
     # Load benchmark data
     print("Loading benchmark data...")
     #df = pd.read_csv("data/bench_data.csv")
-    df = pd.read_csv("data/new_RAG_data/bench_data_v2.csv", nrows=10)
+    df = pd.read_csv("data/new_RAG_data/bench_data_v2.csv", nrows=2)
     total_prompts = len(df)
     print(f"Found {total_prompts} prompts to process")
     
@@ -236,11 +236,11 @@ def main():
     results = []
     for _, row in tqdm(df.iterrows(), total=total_prompts, desc="Processing prompts"):
         # Get relevant documents using prompt-based search
-        relevant_docs = get_relevant_documents(row['prompt'], query_type="prompt")
+        relevant_docs = get_relevant_documents(row['Prompt'], query_type="prompt")
         
         # Run workflow with retrieved documents
         initial_state = {
-            "prompt": row['prompt'],
+            "prompt": row['Prompt'],
             "response": "",
             "retrieved_docs": relevant_docs
         }
@@ -254,8 +254,8 @@ def main():
     # Save results
     print("\nSaving results...")
     results_df = pd.DataFrame(results)
-    results_df.to_csv("results/RAG_non-thinking-v3.csv", index=False)
-    print("Results saved to results/RAG_non-thinking-v3.csv")
+    results_df.to_csv("reproduced-results/RAG_Only.csv", index=False)
+    print("Results saved to reproduced-results/RAG_Only.csv")
 
 if __name__ == "__main__":
     main() 
