@@ -32,6 +32,8 @@ A multi-agent system for generating and verifying OpenROAD Python scripts using 
 
 The scripts will run all necessary setup and processing steps. This may take some time to complete. Results will be saved in the `reproduced-results` directory.
 
+To validate the generated scripts, please follow the validation steps in the [CSE291_Validation repository](https://github.com/anurg02/CSE291_Validiation). Clone this repository and follow their instructions for both manual and automated validation of the generated scripts.
+
 ## Setup
 
 1. Clone the repository
@@ -119,21 +121,15 @@ Results from each benchmark are saved in the `results` directory:
 ## Validation in OpenROAD
 
 To validate the results scripts generated from the agent we have to run the OpenROAD flow script to run and test the scripts.
+
 1. **Procedure:**
 - Inside ORFS flow directory create a new script called flow_script.py and paste the generated script.
-- Update the script manually with the appropriate paths for lib dir, design dir, lef dir and tech lef dir. It is adviced to use "nangate45" as your target PDK and "gcd" as your target design. Script expects a synthesized netlist so you'll have to synthesize gcd using the same "nangate45" pdk.
-- use command openroad -python -exit flow_script.py to run the script and validate. 
+- Update the script manually with the appropriate paths for lib dir, design dir, lef dir and tech lef dir. It is advised to use "nangate45" as your target PDK and "gcd" as your target design. Script expects a synthesized netlist so you'll have to synthesize gcd using the same "nangate45" pdk.
+- Use command `openroad -python -exit flow_script.py` to run the script and validate.
 
-Currently we're using EDA corpus v1 as our current RAG database. EDA corpus v1 is an old version and hence some of the APIs have been deprecated and changed in the newer ORFS versions, also there are few errors in the script generated because LLM hallucination hence you might run into some errors while running the flow. Some of the possible errors have been listed.
+We are using EDA Corpus v2 as our RAG database. This version is more up-to-date with current OpenROAD APIs. There is only one deprecated API that we automatically post-process in our scripts: the pin placer's `.run()` method, which we replace with the appropriate TCL alternative using the `-random` flag.
 
-2. **Possible Errors:**
-- """" quote error: there is an extra quote in some of the API string calls which should be changed to "" .
-- metal layer names "M1" : "nangate45" pdk uses "metal1", "metal2" as the naming convention so change that manually.
-- Run attribute error for the pin placer : pin placer doesn't have any ".run()" method. Use tcl alternative of io placer command instead with -random flag if necessary
-- gpl.doInitialPlace(), gpl.doNesterovPlace() these APIs require no. of threads as an argument. Pass a reasonable integer.
-- provide "verilogFile name" and the appropriate "site name" as an input.
-  
-## Next Steps (before project presentation)
+## EDA Corpus v2 Steps (COMPLETE)
 - RAG: Integrate EDA-Corpus v2 (improved/larger dataset, different formats) (Flow-v2.xlsx)
 - RAG: Integrate OpenROAD APIs (RAGAPIs.csv)
 - RAG: Integrate OpenROAD sample code pieces (RAGCodePiece.csv)
