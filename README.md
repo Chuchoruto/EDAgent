@@ -2,6 +2,36 @@
 
 A multi-agent system for generating and verifying OpenROAD Python scripts using RAG and multiple LLMs.
 
+## REPRODUCING RESULTS
+
+1. Copy `env.example` to `.env` and insert your API keys:
+   - OpenAI API key
+   - Google API key
+
+2. Ensure Docker is installed and running on your system
+
+3. Run the appropriate script for your operating system:
+
+   **For Windows:**
+   ```powershell
+   # If you get a security error, run:
+   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+   
+   # Then run the script:
+   .\run_edagent.ps1
+   ```
+
+   **For Linux/macOS:**
+   ```bash
+   # Make the script executable
+   chmod +x run_edagent.sh
+   
+   # Run the script:
+   ./run_edagent.sh
+   ```
+
+The scripts will run all necessary setup and processing steps. This may take some time to complete. Results will be saved in the `reproduced-results` directory.
+
 ## Setup
 
 1. Clone the repository
@@ -22,14 +52,14 @@ docker-compose up -d
 
 # Return to project root and run setup
 cd ..
-python setup_milvus.py
+python setup_milvus_v2.py
 ```
 
 ## Usage
 
 1. First, preprocess the data:
 ```bash
-python read_data.py
+python read_data_v2.py
 ```
 
 2. Run the benchmarks:
@@ -38,10 +68,10 @@ python read_data.py
 python benchmark_non_rag.py
 
 # Run RAG benchmark
-python benchmark_rag.py
+python benchmark_rag_v2.py
 
 # Run multi-agent workflow
-python agent_workflow.py
+python agent_workflow_v2.py
 ```
 
 ## Agent Architecture
