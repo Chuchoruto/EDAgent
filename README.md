@@ -4,6 +4,8 @@ A multi-agent system for generating and verifying OpenROAD Python scripts using 
 
 ## REPRODUCING RESULTS
 
+#### Note: Requires a system with Torch 2.7 compatibility. Python 3.12
+
 1. Copy `env.example` to `.env` and insert your API keys:
    - OpenAI API key
    - Google API key
